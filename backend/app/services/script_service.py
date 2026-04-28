@@ -49,6 +49,8 @@ async def generate_script(
 ) -> str:
     endpoint = await get_setting_value(db, "api.text.endpoint")
     api_key = await get_setting_value(db, "api.text.api_key")
+    model = await get_setting_value(db, "api.text.model")
+    timeout = int(await get_setting_value(db, "api.text.timeout", "120"))
 
     if not endpoint or not api_key:
         return "AI text API not configured. Please configure in Settings or .env."
@@ -59,7 +61,9 @@ async def generate_script(
             endpoint=endpoint,
             api_key=api_key,
             prompt=prompt,
+            model=model,
             mode=mode,
+            timeout=timeout,
         )
         return generated_text
     except (ImportError, ModuleNotFoundError):
@@ -107,6 +111,9 @@ async def _ai_parse(content: str, db: AsyncSession) -> list[dict] | None:
     if not endpoint or not api_key:
         return None
 
+    model = await get_setting_value(db, "api.text.model")
+    timeout = int(await get_setting_value(db, "api.text.timeout", "120"))
+
     try:
         from app.ai.text_adapter import generate
         import json
@@ -116,13 +123,16 @@ async def _ai_parse(content: str, db: AsyncSession) -> list[dict] | None:
             "Return a JSON array where each element has: title, description_prompt, "
             "environment_name, and shots (array of {title, narration, dialogue, "
             "action_description, camera_angle, characters (array of character names)}). "
+            "Only output the JSON array, no other text."
             f"\n\nScript:\n{content}"
         )
         raw_result = await generate(
             endpoint=endpoint,
             api_key=api_key,
             prompt=parse_prompt,
+            model=model,
             mode="generate",
+            timeout=timeout,
         )
         return json.loads(raw_result)
     except Exception:
