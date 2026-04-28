@@ -1,0 +1,63 @@
+# ──────────────── Node / 前端 ────────────────
+node_modules/
+dist/
+.vite/
+*.local
+
+# ──────────────── Python / 后端 ────────────────
+backend/.venv/
+backend/__pycache__/
+backend/**/__pycache__/
+backend/**/*.pyc
+backend/*.pyc
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.eggs/
+
+# ──────────────── 数据库 ────────────────
+backend/*.db
+backend/*.sqlite
+backend/*.sqlite3
+
+# ──────────────── 环境变量 & 密钥 ────────────────
+.env
+backend/.env
+*.env.local
+*.env.*.local
+
+# ──────────────── 上传文件 ────────────────
+backend/app/uploads/
+backend/uploads/
+
+# ──────────────── 日志 ────────────────
+.logs/
+*.log
+
+# ──────────────── IDE ────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# ──────────────── 测试 ────────────────
+test-results/
+playwright-report/
+blob-report/
+
+# ──────────────── Docker ────────────────
+.docker/
+
+# ──────────────── Alembic ────────────────
+backend/alembic/versions/*.py
+!backend/alembic/versions/__init__.py
+
+# ──────────────── 其他 ────────────────
+*.tgz
+*.tar.gz
+*.zip
+coverage/
+.nyc_output/
