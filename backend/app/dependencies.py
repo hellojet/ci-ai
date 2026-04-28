@@ -53,7 +53,10 @@ async def require_edit_lock(
 
     # Check heartbeat timeout
     if project.lock_heartbeat:
-        elapsed = (datetime.now(timezone.utc) - project.lock_heartbeat).total_seconds()
+        heartbeat = project.lock_heartbeat
+        if heartbeat.tzinfo is None:
+            heartbeat = heartbeat.replace(tzinfo=timezone.utc)
+        elapsed = (datetime.now(timezone.utc) - heartbeat).total_seconds()
         if elapsed > settings.lock_heartbeat_timeout_seconds:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
