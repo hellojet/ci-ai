@@ -29,6 +29,32 @@ class Settings(BaseSettings):
     qiniu_bucket: str = "ci-ai"
     qiniu_domain: str = ""
 
+    # AI 模型默认配置（.env 兜底，数据库配置优先）
+    # 文本生成
+    ai_text_endpoint: str = ""
+    ai_text_model: str = ""
+    ai_text_api_key: str = ""
+    ai_text_concurrency: int = 1
+    ai_text_timeout: int = 60
+    # 图像生成
+    ai_image_endpoint: str = ""
+    ai_image_model: str = ""
+    ai_image_api_key: str = ""
+    ai_image_concurrency: int = 1
+    ai_image_timeout: int = 120
+    # 视频生成
+    ai_video_endpoint: str = ""
+    ai_video_model: str = ""
+    ai_video_api_key: str = ""
+    ai_video_concurrency: int = 1
+    ai_video_timeout: int = 300
+    # 音频生成
+    ai_audio_endpoint: str = ""
+    ai_audio_model: str = ""
+    ai_audio_api_key: str = ""
+    ai_audio_concurrency: int = 1
+    ai_audio_timeout: int = 120
+
     # Lock
     lock_heartbeat_timeout_seconds: int = 60
 

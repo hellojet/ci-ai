@@ -7,6 +7,7 @@ from pydantic import BaseModel
 class SettingOut(BaseModel):
     key: str
     value: Any
+    source: str = "database"  # "database" 或 "env"
     updated_at: Optional[datetime] = None
 
 

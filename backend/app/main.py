@@ -7,11 +7,6 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import select
-
-from app.database import async_session
-from app.models.system_settings import SystemSettings
-
 from app.routers import (
     admin,
     auth,
@@ -37,57 +32,11 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-# ── 默认 API 配置 ────────────────────────────────────────────
-DEFAULT_API_SETTINGS: dict[str, str | int] = {
-    # 文本生成
-    "api.text.endpoint": "https://trip-llm.alibaba-inc.com/api/fai/v1/chat/completions",
-    "api.text.model": "deepseek-v4-flash",
-    "api.text.api_key": "fai-2-632-f20b438c8a82",
-    "api.text.concurrency": 3,
-    "api.text.timeout": 120,
-    # 图像生成
-    "api.image.endpoint": "https://trip-llm.alibaba-inc.com/api/openai/v1/images/generations",
-    "api.image.model": "gpt-image-2",
-    "api.image.api_key": "fai-2-632-f20b438c8a82",
-    "api.image.concurrency": 2,
-    "api.image.timeout": 180,
-    # 视频生成
-    "api.video.endpoint": "https://trip-llm.alibaba-inc.com/api/dashscope/v1/services/aigc/video-generation/video-synthesis",
-    "api.video.model": "wan2.7-i2v",
-    "api.video.api_key": "fai-2-632-f20b438c8a82",
-    "api.video.concurrency": 1,
-    "api.video.timeout": 300,
-    # 音频生成（暂未配置具体 API，仅预留默认值）
-    "api.audio.endpoint": "",
-    "api.audio.model": "",
-    "api.audio.api_key": "",
-    "api.audio.concurrency": 1,
-    "api.audio.timeout": 120,
-}
-
-
-async def init_default_settings() -> None:
-    """应用启动时，将默认 API 配置写入数据库（仅当 key 不存在时）。"""
-    async with async_session() as session:
-        inserted_count = 0
-        for key, value in DEFAULT_API_SETTINGS.items():
-            result = await session.execute(
-                select(SystemSettings).where(SystemSettings.key == key)
-            )
-            if result.scalar_one_or_none() is None:
-                session.add(SystemSettings(key=key, value={"value": value}))
-                inserted_count += 1
-        if inserted_count > 0:
-            await session.commit()
-            logger.info("已初始化 %d 项默认 API 配置", inserted_count)
-        else:
-            logger.info("默认 API 配置已存在，跳过初始化")
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理。"""
-    await init_default_settings()
+    logger.info("CI.AI 后端启动完成，AI 模型默认配置来自 .env，数据库配置优先。")
     yield
 
 

@@ -10,7 +10,7 @@ from app.models.scene import Scene
 from app.models.script import Script
 from app.models.shot import Shot
 from app.models.shot_character import ShotCharacter
-from app.models.system_settings import SystemSettings
+from app.services.settings_service import get_setting_value
 from app.schemas.script import (
     GenerateScriptResponse,
     ParsedCharacterMatch,
@@ -47,24 +47,11 @@ async def update_script(
 async def generate_script(
     db: AsyncSession, project_id: int, prompt: str, mode: str
 ) -> str:
-    endpoint_row = await db.execute(
-        select(SystemSettings).where(SystemSettings.key == "api.text.endpoint")
-    )
-    endpoint_setting = endpoint_row.scalar_one_or_none()
-
-    api_key_row = await db.execute(
-        select(SystemSettings).where(SystemSettings.key == "api.text.api_key")
-    )
-    api_key_setting = api_key_row.scalar_one_or_none()
-
-    if not endpoint_setting or not api_key_setting:
-        return "AI text API not configured. Please configure in Settings."
-
-    endpoint = endpoint_setting.value.get("value", "") if isinstance(endpoint_setting.value, dict) else str(endpoint_setting.value)
-    api_key = api_key_setting.value.get("value", "") if isinstance(api_key_setting.value, dict) else str(api_key_setting.value)
+    endpoint = await get_setting_value(db, "api.text.endpoint")
+    api_key = await get_setting_value(db, "api.text.api_key")
 
     if not endpoint or not api_key:
-        return "AI text API not configured. Please configure in Settings."
+        return "AI text API not configured. Please configure in Settings or .env."
 
     try:
         from app.ai.text_adapter import generate
@@ -76,7 +63,7 @@ async def generate_script(
         )
         return generated_text
     except (ImportError, ModuleNotFoundError):
-        return "AI text API not configured. Please configure in Settings."
+        return "AI text API not configured. Please configure in Settings or .env."
 
 
 async def _fallback_parse(content: str) -> list[dict]:
@@ -114,21 +101,8 @@ async def _fallback_parse(content: str) -> list[dict]:
 
 async def _ai_parse(content: str, db: AsyncSession) -> list[dict] | None:
     """Attempt AI-based script parsing. Returns None if AI is not configured."""
-    endpoint_row = await db.execute(
-        select(SystemSettings).where(SystemSettings.key == "api.text.endpoint")
-    )
-    endpoint_setting = endpoint_row.scalar_one_or_none()
-
-    api_key_row = await db.execute(
-        select(SystemSettings).where(SystemSettings.key == "api.text.api_key")
-    )
-    api_key_setting = api_key_row.scalar_one_or_none()
-
-    if not endpoint_setting or not api_key_setting:
-        return None
-
-    endpoint = endpoint_setting.value.get("value", "") if isinstance(endpoint_setting.value, dict) else str(endpoint_setting.value)
-    api_key = api_key_setting.value.get("value", "") if isinstance(api_key_setting.value, dict) else str(api_key_setting.value)
+    endpoint = await get_setting_value(db, "api.text.endpoint")
+    api_key = await get_setting_value(db, "api.text.api_key")
 
     if not endpoint or not api_key:
         return None
