@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timezone, tzinfo
 
 from fastapi import HTTPException, status
 from sqlalchemy import select
@@ -8,6 +8,13 @@ from app.config import get_settings
 from app.models.project import Project
 
 settings = get_settings()
+
+
+def _ensure_aware(dt: datetime) -> datetime:
+    """确保 datetime 带有时区信息（SQLite 存储的时间戳可能是 naive 的）。"""
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
 
 
 async def acquire_lock(
@@ -32,7 +39,8 @@ async def acquire_lock(
 
     if project.locked_by is not None and project.locked_by != user_id:
         if project.lock_heartbeat:
-            elapsed = (datetime.now(timezone.utc) - project.lock_heartbeat).total_seconds()
+            heartbeat = _ensure_aware(project.lock_heartbeat)
+            elapsed = (datetime.now(timezone.utc) - heartbeat).total_seconds()
             if elapsed <= settings.lock_heartbeat_timeout_seconds:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
