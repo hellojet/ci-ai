@@ -32,7 +32,7 @@ async def update_script(
     project_id: int,
     body: UpdateScriptRequest,
     db: AsyncSession = Depends(get_db),
-    _user: User = Depends(require_edit_lock),
+    _user: User = Depends(get_current_user),
 ):
     script = await script_service.update_script(db, project_id, body.content)
     return ApiResponse(data=ScriptOut.model_validate(script))
@@ -55,7 +55,7 @@ async def generate_script(
 async def parse_script(
     project_id: int,
     db: AsyncSession = Depends(get_db),
-    _user: User = Depends(require_edit_lock),
+    _user: User = Depends(get_current_user),
 ):
     result = await script_service.parse_script(db, project_id)
     return ApiResponse(data=result)

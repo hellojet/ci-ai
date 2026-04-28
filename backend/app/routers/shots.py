@@ -18,19 +18,12 @@ from app.services import shot_service
 router = APIRouter(prefix="/projects/{project_id}", tags=["Shots"])
 
 
-@router.post(
-    "/scenes/{scene_id}/shots", response_model=ApiResponse[ShotOut]
-)
-async def create_shot(
-    project_id: int,
-    scene_id: int,
     body: CreateShotRequest,
     db: AsyncSession = Depends(get_db),
-    _user: User = Depends(require_edit_lock),
+    _user: User = Depends(get_current_user),
 ):
     shot = await shot_service.create_shot(db, project_id, scene_id, body)
     return ApiResponse(data=ShotOut.model_validate(shot))
-
 
 @router.put("/shots/{shot_id}", response_model=ApiResponse[ShotOut])
 async def update_shot(
@@ -38,30 +31,27 @@ async def update_shot(
     shot_id: int,
     body: UpdateShotRequest,
     db: AsyncSession = Depends(get_db),
-    _user: User = Depends(require_edit_lock),
+    _user: User = Depends(get_current_user),
 ):
     shot = await shot_service.update_shot(db, project_id, shot_id, body)
     return ApiResponse(data=ShotOut.model_validate(shot))
-
 
 @router.delete("/shots/{shot_id}", response_model=ApiResponse[None])
 async def delete_shot(
     project_id: int,
     shot_id: int,
     db: AsyncSession = Depends(get_db),
-    _user: User = Depends(require_edit_lock),
+    _user: User = Depends(get_current_user),
 ):
     await shot_service.delete_shot(db, project_id, shot_id)
     return ApiResponse(message="Shot deleted")
-
 
 @router.put("/shots/reorder", response_model=ApiResponse[None])
 async def reorder_shots(
     project_id: int,
     body: ReorderShotsRequest,
     db: AsyncSession = Depends(get_db),
-    _user: User = Depends(require_edit_lock),
-):
+    _user: User = Depends(get_current_user),
     await shot_service.reorder_shots(db, project_id, body.shot_orders)
     return ApiResponse(message="Shots reordered")
 
@@ -80,17 +70,22 @@ async def get_shot_prompt(
     return ApiResponse(data=result)
 
 
-@router.post("/shots/{shot_id}/lock-image", response_model=ApiResponse[None])
-async def lock_image(
-    project_id: int,
-    shot_id: int,
     body: LockImageRequest,
     db: AsyncSession = Depends(get_db),
-    _user: User = Depends(require_edit_lock),
+    _user: User = Depends(get_current_user),
 ):
     await shot_service.lock_image(db, project_id, shot_id, body.image_id)
     return ApiResponse(message="Image locked")
 
+@router.post(
+    "/shots/{shot_id}/upload-audio", response_model=ApiResponse[None]
+)
+async def upload_audio(
+    project_id: int,
+    shot_id: int,
+    audio: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(get_current_user),
 
 @router.post(
     "/shots/{shot_id}/upload-audio", response_model=ApiResponse[None]
