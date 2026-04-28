@@ -58,19 +58,109 @@ kill_services() {
 }
 
 # ──────────────────────────── 检测依赖 ────────────────────────────
+detect_os() {
+  # 检测操作系统和包管理器
+  if [ -f /etc/os-release ]; then
+    . /etc/os-release
+    OS_ID="$ID"
+  elif [ "$(uname)" = "Darwin" ]; then
+    OS_ID="macos"
+  else
+    OS_ID="unknown"
+  fi
+}
+
+install_node() {
+  info "正在自动安装 Node.js..."
+  case "$OS_ID" in
+    ubuntu|debian)
+      # 使用 NodeSource 安装 Node.js 20.x LTS
+      if ! command -v curl &>/dev/null; then
+        sudo apt-get update -qq && sudo apt-get install -y -qq curl
+      fi
+      curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+      sudo apt-get install -y -qq nodejs
+      ;;
+    centos|rhel|fedora|alinux|alios|amzn)
+      if ! command -v curl &>/dev/null; then
+        sudo yum install -y -q curl
+      fi
+      curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo -E bash -
+      sudo yum install -y -q nodejs
+      ;;
+    macos)
+      if command -v brew &>/dev/null; then
+        brew install node@20
+      else
+        error "请先安装 Homebrew: https://brew.sh/ 然后重试"
+        exit 1
+      fi
+      ;;
+    *)
+      error "无法自动安装 Node.js（未识别的操作系统: $OS_ID）"
+      error "请手动安装 Node.js 20+: https://nodejs.org/"
+      exit 1
+      ;;
+  esac
+
+  if command -v node &>/dev/null; then
+    success "Node.js $(node -v) 安装成功"
+  else
+    error "Node.js 安装失败，请手动安装"
+    exit 1
+  fi
+}
+
+install_python() {
+  info "正在自动安装 Python 3.12..."
+  case "$OS_ID" in
+    ubuntu|debian)
+      sudo apt-get update -qq
+      sudo apt-get install -y -qq software-properties-common
+      sudo add-apt-repository -y ppa:deadsnakes/ppa 2>/dev/null || true
+      sudo apt-get update -qq
+      sudo apt-get install -y -qq python3.12 python3.12-venv python3.12-dev
+      ;;
+    centos|rhel|fedora|alinux|alios|amzn)
+      sudo yum install -y -q python3.12 python3.12-devel 2>/dev/null || {
+        # CentOS/RHEL 可能需要从源码编译或使用 EPEL
+        warn "yum 仓库中无 python3.12，尝试安装 python3..."
+        sudo yum install -y -q python3 python3-devel python3-pip
+      }
+      ;;
+    macos)
+      if command -v brew &>/dev/null; then
+        brew install python@3.12
+      else
+        error "请先安装 Homebrew: https://brew.sh/ 然后重试"
+        exit 1
+      fi
+      ;;
+    *)
+      error "无法自动安装 Python（未识别的操作系统: $OS_ID）"
+      error "请手动安装 Python 3.11-3.13"
+      exit 1
+      ;;
+  esac
+}
+
 check_and_install_deps() {
   info "检测依赖项安装情况..."
   echo ""
 
+  detect_os
+  info "操作系统: $OS_ID"
+  echo ""
+
   # ---- Node.js / npm ----
   if ! command -v node &>/dev/null; then
-    error "未安装 Node.js，请先安装: https://nodejs.org/"
-    exit 1
+    warn "未安装 Node.js，正在尝试自动安装..."
+    install_node
   fi
   success "Node.js $(node -v)"
 
   if ! command -v npm &>/dev/null; then
-    error "未安装 npm"
+    error "未安装 npm，请检查 Node.js 安装是否完整"
     exit 1
   fi
   success "npm $(npm -v)"
@@ -107,10 +197,23 @@ check_and_install_deps() {
     fi
   fi
 
+  # 如果仍然没找到合适的 Python，尝试自动安装
   if [ -z "$python_cmd" ]; then
-    error "未安装 Python 3.11-3.13，请先安装: brew install python@3.13"
-    exit 1
+    warn "未找到 Python 3.11-3.13，正在尝试自动安装..."
+    install_python
+    # 重新查找
+    for candidate in python3.12 python3.13 python3.11 python3; do
+      if command -v "$candidate" &>/dev/null; then
+        python_cmd="$candidate"
+        break
+      fi
+    done
+    if [ -z "$python_cmd" ]; then
+      error "Python 安装后仍未找到，请手动安装 Python 3.11-3.13"
+      exit 1
+    fi
   fi
+
   local python_version
   python_version=$($python_cmd --version 2>&1 | awk '{print $2}')
   success "$python_cmd $python_version"
