@@ -17,14 +17,18 @@ from app.services import shot_service
 
 router = APIRouter(prefix="/projects/{project_id}", tags=["Shots"])
 
-
+@router.post(
+    "/scenes/{scene_id}/shots", response_model=ApiResponse[ShotOut]
+)
+async def create_shot(
+    project_id: int,
+    scene_id: int,
     body: CreateShotRequest,
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(get_current_user),
 ):
     shot = await shot_service.create_shot(db, project_id, scene_id, body)
     return ApiResponse(data=ShotOut.model_validate(shot))
-
 @router.put("/shots/{shot_id}", response_model=ApiResponse[ShotOut])
 async def update_shot(
     project_id: int,
