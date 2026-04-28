@@ -2,10 +2,12 @@
 
 import logging
 import os
+import traceback
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from app.routers import (
     admin,
@@ -46,6 +48,16 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """全局异常处理器：将未捕获的异常统一返回 ApiResponse 格式。"""
+    logger.error("Unhandled exception on %s %s: %s", request.method, request.url.path, exc)
+    logger.debug(traceback.format_exc())
+    return JSONResponse(
+        status_code=500,
+        content={"code": -1, "message": f"Internal Server Error: {exc}", "data": None},
+    )
 
 app.add_middleware(
     CORSMiddleware,

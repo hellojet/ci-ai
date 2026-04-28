@@ -12,7 +12,7 @@ from sqlalchemy.orm import selectinload
 from app.models.character import Character
 from app.models.character_view import CharacterView
 from app.services.qiniu_storage import upload_bytes
-from app.services.settings_service import get_setting
+from app.services.settings_service import get_setting_value
 from app.utils.pagination import paginate
 
 logger = logging.getLogger(__name__)
@@ -113,21 +113,16 @@ async def generate_views(
             f"requesting {count} more would exceed the maximum of {MAX_VIEWS_PER_CHARACTER}",
         )
 
-    # 从系统设置中读取图像生成 API 配置
-    endpoint_setting = await get_setting(db, "api.image.endpoint")
-    model_setting = await get_setting(db, "api.image.model")
-    api_key_setting = await get_setting(db, "api.image.api_key")
-    timeout_setting = await get_setting(db, "api.image.timeout")
-
-    endpoint = endpoint_setting.value.get("value", "") if endpoint_setting else ""
-    model = model_setting.value.get("value", "") if model_setting else ""
-    api_key = api_key_setting.value.get("value", "") if api_key_setting else ""
-    timeout = int(timeout_setting.value.get("value", 180)) if timeout_setting else 180
+    # 从系统设置中读取图像生成 API 配置（数据库优先，.env 兜底）
+    endpoint = await get_setting_value(db, "api.image.endpoint")
+    model = await get_setting_value(db, "api.image.model")
+    api_key = await get_setting_value(db, "api.image.api_key")
+    timeout = int(await get_setting_value(db, "api.image.timeout", "180"))
 
     if not endpoint or not api_key:
         raise HTTPException(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,
-            detail="图像生成 API 未配置，请在系统设置中配置 endpoint 和 api_key。",
+            detail="图像生成 API 未配置，请在系统设置或 .env 中配置 endpoint 和 api_key。",
         )
 
     # 构造图像生成 prompt
