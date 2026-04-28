@@ -49,6 +49,9 @@ class Project(Base):
     creator: Mapped[User] = relationship(
         "User", foreign_keys=[creator_id], lazy="selectin"
     )
+    locker: Mapped[User | None] = relationship(
+        "User", foreign_keys=[locked_by], lazy="selectin"
+    )
     style: Mapped[Style | None] = relationship("Style", lazy="selectin")
     scenes: Mapped[list[Scene]] = relationship(
         "Scene", back_populates="project", lazy="selectin"
