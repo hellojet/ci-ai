@@ -7,6 +7,7 @@ import { useAssetStore } from '@/stores/assetStore';
 import { CAMERA_ANGLES } from '@/utils/constants';
 import * as shotApi from '@/api/shots';
 import ImageSelector from './ImageSelector';
+import VideoSelector from './VideoSelector';
 
 const { TextArea } = Input;
 const { Text, Paragraph } = Typography;
@@ -19,7 +20,7 @@ interface ShotEditorProps {
 }
 
 export default function ShotEditor({ shot, projectId, open, onClose }: ShotEditorProps) {
-  const { updateShot, isEditing, lockImage } = useProjectStore();
+  const { updateShot, lockImage, lockVideo } = useProjectStore();
   const { characters, fetchCharacters } = useAssetStore();
   const [form] = Form.useForm();
   const [promptPreview, setPromptPreview] = useState<PromptPreview | null>(null);
@@ -61,10 +62,10 @@ export default function ShotEditor({ shot, projectId, open, onClose }: ShotEdito
     try {
       const values = form.getFieldsValue();
       await updateShot(shot.id, values);
-      message.success('Shot updated');
+      message.success('镜头已更新');
       fetchPrompt();
     } catch (error) {
-      message.error((error as Error).message || 'Failed to update shot');
+      message.error((error as Error).message || '更新镜头失败');
     } finally {
       setSaving(false);
     }
@@ -74,9 +75,19 @@ export default function ShotEditor({ shot, projectId, open, onClose }: ShotEdito
     if (!shot) return;
     try {
       await lockImage(shot.id, imageId);
-      message.success('Image locked');
+      message.success('图片已锁定');
     } catch (error) {
-      message.error((error as Error).message || 'Failed to lock image');
+      message.error((error as Error).message || '锁定图片失败');
+    }
+  };
+
+  const handleLockVideo = async (videoId: number) => {
+    if (!shot) return;
+    try {
+      await lockVideo(shot.id, videoId);
+      message.success('视频已锁定');
+    } catch (error) {
+      message.error((error as Error).message || '锁定视频失败');
     }
   };
 
@@ -84,7 +95,7 @@ export default function ShotEditor({ shot, projectId, open, onClose }: ShotEdito
 
   return (
     <Drawer
-      title={shot.title || 'Shot Editor'}
+      title={shot.title || '镜头编辑'}
       open={open}
       onClose={onClose}
       width={480}
@@ -93,46 +104,44 @@ export default function ShotEditor({ shot, projectId, open, onClose }: ShotEdito
         body: { background: '#0c0c0c', padding: 16 },
       }}
       extra={
-        isEditing && (
-          <Button type="primary" icon={<SaveOutlined />} size="small" onClick={handleSave} loading={saving}>
-            Save
-          </Button>
-        )
+        <Button type="primary" icon={<SaveOutlined />} size="small" onClick={handleSave} loading={saving}>
+          保存
+        </Button>
       }
     >
-      <Form form={form} layout="vertical" disabled={!isEditing}>
-        <Form.Item name="title" label="Title">
-          <Input placeholder="Shot title" />
+      <Form form={form} layout="vertical">
+        <Form.Item name="title" label="标题">
+          <Input placeholder="镜头标题" />
         </Form.Item>
 
-        <Form.Item name="narration" label="Narration">
-          <TextArea rows={2} placeholder="Narration text..." />
+        <Form.Item name="narration" label="旁白">
+          <TextArea rows={2} placeholder="旁白文案..." />
         </Form.Item>
 
-        <Form.Item name="dialogue" label="Dialogue">
-          <TextArea rows={2} placeholder="Character dialogue..." />
+        <Form.Item name="dialogue" label="对白">
+          <TextArea rows={2} placeholder="角色对白..." />
         </Form.Item>
 
-        <Form.Item name="subtitle" label="Subtitle">
-          <Input placeholder="Subtitle text" />
+        <Form.Item name="subtitle" label="字幕">
+          <Input placeholder="字幕内容" />
         </Form.Item>
 
-        <Form.Item name="action_description" label="Action Description">
-          <TextArea rows={2} placeholder="Describe the action..." />
+        <Form.Item name="action_description" label="动作描述">
+          <TextArea rows={2} placeholder="描述镜头中的动作..." />
         </Form.Item>
 
-        <Form.Item name="camera_angle" label="Camera Angle">
+        <Form.Item name="camera_angle" label="镜头角度">
           <Select
-            placeholder="Select camera angle"
+            placeholder="请选择镜头角度"
             allowClear
             options={CAMERA_ANGLES.map((angle) => ({ value: angle.value, label: angle.label }))}
           />
         </Form.Item>
 
-        <Form.Item name="character_ids" label="Characters">
+        <Form.Item name="character_ids" label="角色">
           <Select
             mode="multiple"
-            placeholder="Select characters"
+            placeholder="请选择角色"
             options={characters.map((char) => ({ value: char.id, label: char.name }))}
           />
         </Form.Item>
@@ -143,13 +152,26 @@ export default function ShotEditor({ shot, projectId, open, onClose }: ShotEdito
       {/* Image Selector */}
       <div style={{ marginBottom: 16 }}>
         <Text strong style={{ color: '#fff', display: 'block', marginBottom: 8 }}>
-          Candidate Images ({shot.images.length})
+          候选图片（{shot.images.length}）
         </Text>
         <ImageSelector
           images={shot.images}
           lockedImageId={shot.locked_image_id}
           onLock={handleLockImage}
-          isEditing={isEditing}
+        />
+      </div>
+
+      <Divider style={{ borderColor: '#1e1e1e' }} />
+
+      {/* Video Selector */}
+      <div style={{ marginBottom: 16 }}>
+        <Text strong style={{ color: '#fff', display: 'block', marginBottom: 8 }}>
+          候选视频（{shot.videos?.length ?? 0}）
+        </Text>
+        <VideoSelector
+          videos={shot.videos ?? []}
+          lockedVideoId={shot.locked_video_id}
+          onLock={handleLockVideo}
         />
       </div>
 
@@ -160,10 +182,10 @@ export default function ShotEditor({ shot, projectId, open, onClose }: ShotEdito
         <Space style={{ marginBottom: 8 }}>
           <EyeOutlined style={{ color: '#a855f7' }} />
           <Text strong style={{ color: '#fff' }}>
-            Generated Prompt
+            生成提示词
           </Text>
           <Button type="link" size="small" onClick={fetchPrompt} loading={loadingPrompt}>
-            Refresh
+            刷新
           </Button>
         </Space>
 
@@ -183,7 +205,7 @@ export default function ShotEditor({ shot, projectId, open, onClose }: ShotEdito
           </div>
         ) : (
           <Text type="secondary" style={{ fontSize: 12 }}>
-            Save shot details to generate prompt preview
+            保存镜头信息后可查看生成提示词预览
           </Text>
         )}
       </div>

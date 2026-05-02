@@ -12,6 +12,15 @@ export interface ShotImage {
   created_at: string;
 }
 
+export interface ShotVideo {
+  id: number;
+  shot_id: number;
+  video_url: string;
+  source_image_id?: number;
+  is_locked: boolean;
+  created_at: string;
+}
+
 export interface Shot {
   id: number;
   scene_id: number;
@@ -23,12 +32,14 @@ export interface Shot {
   camera_angle?: CameraAngle;
   generated_prompt?: string;
   locked_image_id?: number;
+  locked_video_id?: number;
   video_url?: string;
   audio_url?: string;
   sort_order: number;
   status: ShotStatus;
   characters: Character[];
   images: ShotImage[];
+  videos: ShotVideo[];
   created_at: string;
   updated_at: string;
 }

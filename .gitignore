@@ -61,3 +61,7 @@ backend/alembic/versions/*.py
 *.zip
 coverage/
 .nyc_output/
+
+e2e/
+
+*.rdb

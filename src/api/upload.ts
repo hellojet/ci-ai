@@ -5,7 +5,7 @@ export async function uploadFile(file: File, category: string): Promise<UploadRe
   const formData = new FormData();
   formData.append('file', file);
   formData.append('category', category);
-  return apiClient.post('/upload', formData, {
+  return apiClient.post('/uploads', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
   });
 }

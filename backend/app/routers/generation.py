@@ -33,6 +33,7 @@ async def create_generation_task(
     )
     return ApiResponse(
         data=GenerateResponse(
+            id=task.id,
             task_id=task.id,
             task_type=task.task_type,
             status=task.status,
@@ -74,6 +75,7 @@ async def retry_task(
     task = await generation_service.retry_task(db, task_id, current_user.id)
     return ApiResponse(
         data=GenerateResponse(
+            id=task.id,
             task_id=task.id,
             task_type=task.task_type,
             status=task.status,

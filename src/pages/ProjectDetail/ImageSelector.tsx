@@ -8,10 +8,9 @@ interface ImageSelectorProps {
   images: ShotImage[];
   lockedImageId?: number;
   onLock: (imageId: number) => void;
-  isEditing: boolean;
 }
 
-export default function ImageSelector({ images, lockedImageId, onLock, isEditing }: ImageSelectorProps) {
+export default function ImageSelector({ images, lockedImageId, onLock }: ImageSelectorProps) {
   if (images.length === 0) {
     return (
       <Empty
@@ -34,7 +33,7 @@ export default function ImageSelector({ images, lockedImageId, onLock, isEditing
               borderRadius: 6,
               overflow: 'hidden',
               border: isLocked ? '2px solid #52c41a' : '2px solid #2a2a2a',
-              cursor: isEditing ? 'pointer' : 'default',
+              cursor: 'pointer',
             }}
           >
             <Image
@@ -63,7 +62,7 @@ export default function ImageSelector({ images, lockedImageId, onLock, isEditing
               </div>
             )}
 
-            {isEditing && !isLocked && (
+            {!isLocked && (
               <Button
                 size="small"
                 icon={<LockOutlined />}

@@ -29,3 +29,10 @@ export async function deleteEnvironment(environmentId: number): Promise<void> {
 export async function generateEnvironmentImage(environmentId: number): Promise<void> {
   return apiClient.post(`/environments/${environmentId}/generate-image`);
 }
+
+export async function deleteEnvironmentImage(
+  environmentId: number,
+  imageId: number,
+): Promise<void> {
+  return apiClient.delete(`/environments/${environmentId}/images/${imageId}`);
+}

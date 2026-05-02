@@ -42,6 +42,9 @@ def upload_bytes(
         logger.error("七牛云上传失败: status=%s, body=%s", info.status_code, info.text_body)
         raise RuntimeError(f"七牛云上传失败: {info.status_code}")
 
+    # 七牛默认域名的 HTTPS 证书 CN 不匹配（*.ctcdn.cn），只能走 http。
+    # 如果前端部署在 https 下需要避免 mixed content，请在七牛后台绑定自有域名并配置 HTTPS 证书，
+    # 然后把 QINIU_DOMAIN 改成自有域名即可。
     url = f"http://{settings.qiniu_domain}/{key}"
     logger.info("七牛云上传成功: %s", url)
     return url

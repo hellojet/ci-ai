@@ -1,5 +1,5 @@
 import apiClient from './client';
-import type { Project, ProjectDetail, CreateProjectRequest, UpdateProjectRequest, LockInfo } from '@/types/project';
+import type { Project, ProjectDetail, CreateProjectRequest, UpdateProjectRequest } from '@/types/project';
 import type { PaginatedData } from '@/types/common';
 
 export async function getProjects(params?: { page?: number; page_size?: number; status?: string }): Promise<PaginatedData<Project>> {
@@ -20,16 +20,4 @@ export async function updateProject(projectId: number, data: UpdateProjectReques
 
 export async function deleteProject(projectId: number): Promise<void> {
   return apiClient.delete(`/projects/${projectId}`);
-}
-
-export async function acquireLock(projectId: number): Promise<LockInfo> {
-  return apiClient.post(`/projects/${projectId}/lock`);
-}
-
-export async function heartbeatLock(projectId: number): Promise<void> {
-  return apiClient.post(`/projects/${projectId}/lock/heartbeat`);
-}
-
-export async function releaseLock(projectId: number): Promise<void> {
-  return apiClient.delete(`/projects/${projectId}/lock`);
 }

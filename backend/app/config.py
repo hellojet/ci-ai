@@ -9,6 +9,12 @@ class Settings(BaseSettings):
     # Redis
     redis_url: str = "redis://localhost:6379/0"
 
+    # 对外可访问的基础 URL（用于拼接传给外部 AI 网关的绝对图片/音频地址）
+    # 生产环境应配成可被外网访问的域名或 ngrok 地址，例如 https://xxx.ngrok.app
+    # 本地调试可设为 http://<内网 IP>:8000 或 http://host.docker.internal:8000
+    # 未配置时，相对 URL 将原样透传（dashscope 等外部网关会直接报 400）
+    public_base_url: str = ""
+
     # JWT
     jwt_secret_key: str = "change-me-to-a-random-secret-key"
     jwt_algorithm: str = "HS256"
@@ -54,9 +60,6 @@ class Settings(BaseSettings):
     ai_audio_api_key: str = ""
     ai_audio_concurrency: int = 1
     ai_audio_timeout: int = 120
-
-    # Lock
-    lock_heartbeat_timeout_seconds: int = 60
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 

@@ -8,6 +8,7 @@ from app.schemas.common import ApiResponse
 from app.schemas.shot import (
     CreateShotRequest,
     LockImageRequest,
+    LockVideoRequest,
     PromptPreviewResponse,
     ReorderShotsRequest,
     ShotOut,
@@ -32,6 +33,19 @@ async def create_shot(
     return ApiResponse(data=ShotOut.model_validate(shot))
 
 
+@router.put("/shots/reorder", response_model=ApiResponse[None])
+async def reorder_shots(
+    project_id: int,
+    body: ReorderShotsRequest,
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    # 注意：此路由必须声明在 /shots/{shot_id} 之前，否则 FastAPI 会把 "reorder"
+    # 作为 shot_id 去匹配 /shots/{shot_id}，导致 422 int_parsing 错误。
+    await shot_service.reorder_shots(db, project_id, body.shot_orders)
+    return ApiResponse(message="Shots reordered")
+
+
 @router.put("/shots/{shot_id}", response_model=ApiResponse[ShotOut])
 async def update_shot(
     project_id: int,
@@ -53,17 +67,6 @@ async def delete_shot(
 ):
     await shot_service.delete_shot(db, project_id, shot_id)
     return ApiResponse(message="Shot deleted")
-
-
-@router.put("/shots/reorder", response_model=ApiResponse[None])
-async def reorder_shots(
-    project_id: int,
-    body: ReorderShotsRequest,
-    db: AsyncSession = Depends(get_db),
-    _user: User = Depends(get_current_user),
-):
-    await shot_service.reorder_shots(db, project_id, body.shot_orders)
-    return ApiResponse(message="Shots reordered")
 
 
 @router.get(
@@ -90,6 +93,18 @@ async def lock_image(
 ):
     await shot_service.lock_image(db, project_id, shot_id, body.image_id)
     return ApiResponse(message="Image locked")
+
+
+@router.post("/shots/{shot_id}/lock-video", response_model=ApiResponse[None])
+async def lock_video(
+    project_id: int,
+    shot_id: int,
+    body: LockVideoRequest,
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    await shot_service.lock_video(db, project_id, shot_id, body.video_id)
+    return ApiResponse(message="Video locked")
 
 
 @router.post(

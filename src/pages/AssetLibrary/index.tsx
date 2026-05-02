@@ -45,10 +45,13 @@ export default function AssetLibraryPage() {
       formData.append('name', values.name);
       if (values.description) formData.append('description', values.description);
       if (values.visual_prompt) formData.append('visual_prompt', values.visual_prompt);
+      // 把弹窗内已经上传到七牛的种子图 URL 一并提交给后端
+      if (seedImageUrl) formData.append('seed_image_url', seedImageUrl);
       await characterApi.createCharacter(formData);
       message.success(t('assets.characterCreated'));
       setCreateType(null);
       form.resetFields();
+      setSeedImageUrl('');
       fetchCharacters();
     } catch (error) {
       message.error((error as Error).message || t('assets.characterCreateFailed'));
@@ -76,10 +79,13 @@ export default function AssetLibraryPage() {
       const formData = new FormData();
       formData.append('name', values.name);
       formData.append('prompt', values.prompt);
+      // 把弹窗内已经上传到七牛的参考图 URL 一并提交给后端
+      if (refImageUrl) formData.append('reference_image_url', refImageUrl);
       await styleApi.createStyle(formData);
       message.success(t('assets.styleCreated'));
       setCreateType(null);
       form.resetFields();
+      setRefImageUrl('');
       fetchStyles();
     } catch (error) {
       message.error((error as Error).message || t('assets.styleCreateFailed'));

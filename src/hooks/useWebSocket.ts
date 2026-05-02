@@ -13,7 +13,7 @@ export function useWebSocket(projectId: number | null) {
   const reconnectAttempts = useRef(0);
   const maxReconnectDelay = 30000;
 
-  const { onTaskProgress, onTaskCompleted, onLockChanged, fetchProject } = useProjectStore();
+  const { onTaskProgress, onTaskCompleted, fetchProject } = useProjectStore();
   const { updateTaskStatus } = useGenerationStore();
 
   const connect = useCallback(() => {
@@ -52,10 +52,6 @@ export function useWebSocket(projectId: number | null) {
               }
               break;
 
-            case 'lock_changed':
-              onLockChanged(wsMessage.data);
-              break;
-
             case 'content_changed':
               if (projectId) {
                 fetchProject(projectId);
@@ -78,7 +74,7 @@ export function useWebSocket(projectId: number | null) {
     } catch {
       scheduleReconnect();
     }
-  }, [projectId, onTaskProgress, onTaskCompleted, onLockChanged, fetchProject, updateTaskStatus]);
+  }, [projectId, onTaskProgress, onTaskCompleted, fetchProject, updateTaskStatus]);
 
   const scheduleReconnect = useCallback(() => {
     const delay = Math.min(1000 * Math.pow(2, reconnectAttempts.current), maxReconnectDelay);

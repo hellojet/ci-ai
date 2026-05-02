@@ -101,31 +101,65 @@ async def generate_style_image(
 
     prompt = f"{style.prompt}，风格参考图，高质量，艺术感"
 
-    max_retries = 3
-    retry_delay = 5
-    last_error = None
+    max_retries = 10
+    last_error: Optional[str] = None
+    response: Optional[httpx.Response] = None
 
     for attempt in range(1, max_retries + 1):
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.post(
-                endpoint,
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {api_key}",
-                },
-                json={
-                    "prompt": prompt,
-                    "model": model,
-                    "n": 1,
-                    "size": "1024x1024",
-                    "quality": "low",
-                    "output_format": "png",
-                    "output_compression": 100,
-                },
+        # 指数退避：5s, 8s, 13s, 20s, 30s, ...，封顶 60s
+        retry_delay = min(60, int(5 * (1.6 ** (attempt - 1))))
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                response = await client.post(
+                    endpoint,
+                    headers={
+                        "Content-Type": "application/json",
+                        "Authorization": f"Bearer {api_key}",
+                    },
+                    json={
+                        "prompt": prompt,
+                        "model": model,
+                        "n": 1,
+                        "size": "1024x1024",
+                        "quality": "low",
+                        "output_format": "png",
+                        "output_compression": 100,
+                    },
+                )
+        except (httpx.ReadError, httpx.ConnectError, httpx.RemoteProtocolError,
+                httpx.ReadTimeout, httpx.ConnectTimeout, httpx.WriteError) as exc:
+            last_error = f"network error: {type(exc).__name__}: {exc}"
+            logger.warning(
+                "图像生成 API 网络错误（第 %d/%d 次）：%s，%d 秒后重试...",
+                attempt, max_retries, last_error, retry_delay,
+            )
+            if attempt < max_retries:
+                await asyncio.sleep(retry_delay)
+                continue
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"图像生成 API 网络异常（已重试 {max_retries} 次）: {last_error}",
             )
 
         if response.status_code == 200:
-            break
+            # 兜底：AI 网关偶尔返回 200 但 body 为空或非 JSON，按限流策略重试
+            try:
+                data = response.json()
+                break
+            except Exception as json_exc:
+                body_text = response.text[:500]
+                last_error = f"200 but invalid json: {json_exc}, body={body_text!r}"
+                if attempt < max_retries:
+                    logger.warning(
+                        "风格图像生成 API 返回 200 但 body 解析失败（第 %d/%d 次），%d 秒后重试... %s",
+                        attempt, max_retries, retry_delay, last_error,
+                    )
+                    await asyncio.sleep(retry_delay)
+                    continue
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=f"图像生成 API 返回无效 JSON（已重试 {max_retries} 次）: {last_error}",
+                )
 
         body_text = response.text[:500]
         is_rate_limited = (
@@ -151,7 +185,7 @@ async def generate_style_image(
             detail=f"图像生成 API 调用失败（已重试 {max_retries} 次）: {last_error}",
         )
 
-    data = response.json()
+    assert response is not None
     image_data_list = data.get("data", [])
     if not image_data_list:
         raise HTTPException(

@@ -25,6 +25,10 @@ export async function lockImage(projectId: number, shotId: number, imageId: numb
   return apiClient.post(`/projects/${projectId}/shots/${shotId}/lock-image`, { image_id: imageId });
 }
 
+export async function lockVideo(projectId: number, shotId: number, videoId: number): Promise<void> {
+  return apiClient.post(`/projects/${projectId}/shots/${shotId}/lock-video`, { video_id: videoId });
+}
+
 export async function uploadAudio(projectId: number, shotId: number, file: File): Promise<{ audio_url: string }> {
   const formData = new FormData();
   formData.append('file', file);

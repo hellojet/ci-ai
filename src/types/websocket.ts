@@ -21,11 +21,6 @@ export interface TaskFailedEvent {
   will_retry: boolean;
 }
 
-export interface LockChangedEvent {
-  locked_by: { id: number; username: string } | null;
-  action: 'acquired' | 'released' | 'force_released';
-}
-
 export interface ContentChangedEvent {
   changed_by: { id: number; username: string };
   entity: string;
@@ -37,5 +32,4 @@ export type WebSocketMessage =
   | { type: 'task_progress'; data: TaskProgressEvent }
   | { type: 'task_completed'; data: TaskCompletedEvent }
   | { type: 'task_failed'; data: TaskFailedEvent }
-  | { type: 'lock_changed'; data: LockChangedEvent }
   | { type: 'content_changed'; data: ContentChangedEvent };

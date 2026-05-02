@@ -12,7 +12,7 @@ interface ScriptPanelProps {
 }
 
 export default function ScriptPanel({ projectId }: ScriptPanelProps) {
-  const { currentProject, isEditing, fetchProject } = useProjectStore();
+  const { currentProject, fetchProject } = useProjectStore();
   const script = currentProject?.script;
   const [content, setContent] = useState(script?.content || '');
   const [saving, setSaving] = useState(false);
@@ -22,14 +22,16 @@ export default function ScriptPanel({ projectId }: ScriptPanelProps) {
   const [generating, setGenerating] = useState(false);
   const [parsing, setParsing] = useState(false);
   const [parseWarnings, setParseWarnings] = useState<string[]>([]);
+  // 当前项目未实现编辑锁功能时，默认允许编辑
+  const isEditing = true;
 
   const handleSave = async () => {
     setSaving(true);
     try {
       await scriptApi.updateScript(projectId, content);
-      message.success('Script saved');
+      message.success('剧本已保存');
     } catch (error) {
-      message.error((error as Error).message || 'Failed to save script');
+      message.error((error as Error).message || '保存剧本失败');
     } finally {
       setSaving(false);
     }
@@ -45,9 +47,9 @@ export default function ScriptPanel({ projectId }: ScriptPanelProps) {
       setContent(result.content);
       setGenerateModalOpen(false);
       setGeneratePrompt('');
-      message.success('Script generated');
+      message.success('剧本已生成');
     } catch (error) {
-      message.error((error as Error).message || 'Failed to generate script');
+      message.error((error as Error).message || '生成剧本失败');
     } finally {
       setGenerating(false);
     }
@@ -55,7 +57,7 @@ export default function ScriptPanel({ projectId }: ScriptPanelProps) {
 
   const handleParse = async () => {
     if (!content.trim()) {
-      message.warning('Please write or generate a script first');
+      message.warning('请先撰写或生成剧本');
       return;
     }
     setParsing(true);
@@ -67,9 +69,9 @@ export default function ScriptPanel({ projectId }: ScriptPanelProps) {
         setParseWarnings(result.warnings);
       }
       await fetchProject(projectId);
-      message.success(`Parsed into ${result.scenes.length} scenes`);
+      message.success(`已拆解为 ${result.scenes.length} 个场景`);
     } catch (error) {
-      message.error((error as Error).message || 'Failed to parse script');
+      message.error((error as Error).message || '拆解剧本失败');
     } finally {
       setParsing(false);
     }
@@ -113,10 +115,10 @@ export default function ScriptPanel({ projectId }: ScriptPanelProps) {
           disabled={!isEditing}
           style={{
             height: '100%',
-            minHeight: 300,
-            background: '#0c0c0c',
-            borderColor: '#1e1e1e',
-            color: '#ddd',
+            minHeight: 260,
+            background: '#0f0f0f',
+            color: '#e5e5e5',
+            border: '1px solid #262626',
             resize: 'none',
           }}
         />
@@ -144,7 +146,6 @@ export default function ScriptPanel({ projectId }: ScriptPanelProps) {
             size="small"
             onClick={handleSave}
             loading={saving}
-            disabled={!isEditing}
           >
             Save
           </Button>
@@ -152,7 +153,6 @@ export default function ScriptPanel({ projectId }: ScriptPanelProps) {
             icon={<ThunderboltOutlined />}
             size="small"
             onClick={() => setGenerateModalOpen(true)}
-            disabled={!isEditing}
           >
             AI Generate
           </Button>
@@ -162,7 +162,6 @@ export default function ScriptPanel({ projectId }: ScriptPanelProps) {
             size="small"
             onClick={handleParse}
             loading={parsing}
-            disabled={!isEditing}
           >
             Parse Script
           </Button>

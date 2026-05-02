@@ -21,6 +21,17 @@ class ShotImageOut(BaseModel):
     created_at: datetime
 
 
+class ShotVideoOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    shot_id: int
+    video_url: str
+    source_image_id: Optional[int] = None
+    is_locked: bool
+    created_at: datetime
+
+
 class ShotOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -34,12 +45,16 @@ class ShotOut(BaseModel):
     camera_angle: Optional[str] = None
     generated_prompt: Optional[str] = None
     locked_image_id: Optional[int] = None
+    locked_video_id: Optional[int] = None
+    ref_environment_image_id: Optional[int] = None
+    ref_character_view_id: Optional[int] = None
     video_url: Optional[str] = None
     audio_url: Optional[str] = None
     sort_order: int
     status: str
     characters: list[CharacterBrief] = Field(default_factory=list)
     images: list[ShotImageOut] = Field(default_factory=list)
+    videos: list[ShotVideoOut] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 
@@ -63,6 +78,8 @@ class UpdateShotRequest(BaseModel):
     action_description: Optional[str] = None
     camera_angle: Optional[str] = None
     character_ids: Optional[list[int]] = None
+    ref_environment_image_id: Optional[int] = None
+    ref_character_view_id: Optional[int] = None
     sort_order: Optional[int] = None
 
 
@@ -78,6 +95,10 @@ class ReorderShotsRequest(BaseModel):
 
 class LockImageRequest(BaseModel):
     image_id: int
+
+
+class LockVideoRequest(BaseModel):
+    video_id: int
 
 
 class PromptComponents(BaseModel):

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router';
 import { Typography, Button, Form, Input, Spin, Card, Image, Space, message } from 'antd';
-import { ArrowLeftOutlined, PlusOutlined } from '@ant-design/icons';
+import { ArrowLeftOutlined, PlusOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import * as styleApi from '@/api/styles';
 import { useLocale } from '@/hooks/useLocale';
 import FileUpload from '@/components/FileUpload';
@@ -18,6 +18,7 @@ export default function StyleDetailPage() {
   const [style, setStyle] = useState<Style | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [generating, setGenerating] = useState(false);
   const [form] = Form.useForm();
 
   const fetchStyle = async () => {
@@ -54,6 +55,19 @@ export default function StyleDetailPage() {
     }
   };
 
+  const handleGenerateReferenceImage = async () => {
+    setGenerating(true);
+    try {
+      const updated = await styleApi.generateStyleImage(styleId);
+      setStyle(updated);
+      message.success(t('assets.imageGenerationStarted') || '参考图片已生成');
+    } catch (error) {
+      message.error((error as Error).message || '生成参考图片失败');
+    } finally {
+      setGenerating(false);
+    }
+  };
+
   if (loading) {
     return <div style={{ display: 'flex', justifyContent: 'center', padding: 60 }}><Spin size="large" /></div>;
   }
@@ -81,9 +95,36 @@ export default function StyleDetailPage() {
             {style.reference_image_url && (
               <Image src={style.reference_image_url} width={400} style={{ borderRadius: 8, marginBottom: 8 }} />
             )}
-            <FileUpload category="reference" accept="image/*" onSuccess={() => fetchStyle()}>
-              <Button icon={<PlusOutlined />}>{style.reference_image_url ? t('common.replace') : t('common.upload')}</Button>
-            </FileUpload>
+            <Space>
+              <FileUpload
+                category="reference"
+                accept="image/*"
+                onSuccess={async (url) => {
+                  try {
+                    const formData = new FormData();
+                    formData.append('name', style.name);
+                    if (style.prompt) formData.append('prompt', style.prompt);
+                    formData.append('reference_image_url', url);
+                    await styleApi.updateStyle(styleId, formData);
+                    message.success(t('assets.saveSuccess'));
+                    fetchStyle();
+                  } catch (error) {
+                    message.error((error as Error).message || t('assets.saveFailed'));
+                  }
+                }}
+              >
+                <Button icon={<PlusOutlined />}>
+                  {style.reference_image_url ? t('common.replace') : t('common.upload')}
+                </Button>
+              </FileUpload>
+              <Button
+                icon={<ThunderboltOutlined />}
+                onClick={handleGenerateReferenceImage}
+                loading={generating}
+              >
+                {t('assets.aiGenerate') || 'AI Generate'}
+              </Button>
+            </Space>
           </Form.Item>
           <Button type="primary" htmlType="submit" loading={saving}>{t('common.saveChanges')}</Button>
         </Form>

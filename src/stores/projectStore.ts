@@ -1,9 +1,8 @@
 import { create } from 'zustand';
 import type { ProjectDetail } from '@/types/project';
-import type { User } from '@/types/user';
 import type { Scene } from '@/types/scene';
-import type { Shot, ShotImage } from '@/types/shot';
-import type { TaskProgressEvent, TaskCompletedEvent, LockChangedEvent } from '@/types/websocket';
+import type { ShotImage } from '@/types/shot';
+import type { TaskProgressEvent, TaskCompletedEvent } from '@/types/websocket';
 import * as projectApi from '@/api/projects';
 import * as sceneApi from '@/api/scenes';
 import * as shotApi from '@/api/shots';
@@ -12,8 +11,6 @@ import type { CreateShotRequest, UpdateShotRequest, ShotOrder } from '@/types/sh
 
 interface ProjectState {
   currentProject: ProjectDetail | null;
-  isEditing: boolean;
-  lockedBy: User | null;
   loading: boolean;
 
   fetchProject: (id: number) => Promise<void>;
@@ -30,19 +27,14 @@ interface ProjectState {
   deleteShot: (shotId: number) => Promise<void>;
   reorderShots: (orders: ShotOrder[]) => Promise<void>;
   lockImage: (shotId: number, imageId: number) => Promise<void>;
-
-  setEditing: (editing: boolean) => void;
-  setLockedBy: (user: User | null) => void;
+  lockVideo: (shotId: number, videoId: number) => Promise<void>;
 
   onTaskProgress: (data: TaskProgressEvent) => void;
   onTaskCompleted: (data: TaskCompletedEvent) => void;
-  onLockChanged: (data: LockChangedEvent) => void;
 }
 
 export const useProjectStore = create<ProjectState>((set, get) => ({
   currentProject: null,
-  isEditing: false,
-  lockedBy: null,
   loading: false,
 
   fetchProject: async (id) => {
@@ -51,7 +43,6 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       const project = await projectApi.getProject(id);
       set({
         currentProject: project,
-        lockedBy: project.locked_by || null,
         loading: false,
       });
     } catch (error) {
@@ -70,7 +61,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   },
 
   clearProject: () => {
-    set({ currentProject: null, isEditing: false, lockedBy: null });
+    set({ currentProject: null });
   },
 
   addScene: async (data) => {
@@ -218,25 +209,41 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }));
   },
 
-  setEditing: (editing) => set({ isEditing: editing }),
-  setLockedBy: (user) => set({ lockedBy: user }),
+  lockVideo: async (shotId, videoId) => {
+    const project = get().currentProject;
+    if (!project) return;
+    await shotApi.lockVideo(project.id, shotId, videoId);
+    set((state) => ({
+      currentProject: state.currentProject
+        ? {
+            ...state.currentProject,
+            scenes: state.currentProject.scenes.map((scene) => ({
+              ...scene,
+              shots: scene.shots.map((shot) => {
+                if (shot.id !== shotId) return shot;
+                // 找到被锁定的那条视频，用它的 url 同步到 shot.video_url，保证缩略图/Preview 立即更新
+                const target = shot.videos?.find((v) => v.id === videoId);
+                return {
+                  ...shot,
+                  locked_video_id: videoId,
+                  video_url: target?.video_url ?? shot.video_url,
+                  status: 'completed' as const,
+                  videos: (shot.videos ?? []).map((v) => ({
+                    ...v,
+                    is_locked: v.id === videoId,
+                  })),
+                };
+              }),
+            })),
+          }
+        : null,
+    }));
+  },
 
   onTaskProgress: (data) => {
-    set((state) => {
-      if (!state.currentProject) return state;
-      return {
-        currentProject: {
-          ...state.currentProject,
-          scenes: state.currentProject.scenes.map((scene) => ({
-            ...scene,
-            shots: scene.shots.map((shot) => {
-              if (shot.id !== data.shot_id) return shot;
-              return { ...shot, status: data.status === 'running' ? shot.status : shot.status };
-            }),
-          })),
-        },
-      };
-    });
+    // WebSocket 推送的任务进度事件（目前仅用于占位，实际进度由 generationStore 的 HTTP 轮询驱动）
+    // 不直接改写 shot.status，避免和 task.status 语义重叠
+    void data;
   },
 
   onTaskCompleted: (data) => {
@@ -273,11 +280,4 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     });
   },
 
-  onLockChanged: (data) => {
-    if (data.action === 'released' || data.action === 'force_released') {
-      set({ lockedBy: null, isEditing: false });
-    } else if (data.action === 'acquired' && data.locked_by) {
-      set({ lockedBy: data.locked_by as User });
-    }
-  },
 }));

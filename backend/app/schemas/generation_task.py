@@ -9,6 +9,7 @@ class GenerateRequest(BaseModel):
 
 
 class GenerateResponse(BaseModel):
+    id: int
     task_id: int
     task_type: str
     status: str

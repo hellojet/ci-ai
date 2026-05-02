@@ -7,6 +7,7 @@ from app.models.scene import Scene
 from app.models.shot import Shot
 from app.models.shot_character import ShotCharacter
 from app.models.shot_image import ShotImage
+from app.models.shot_video import ShotVideo
 from app.schemas.shot import (
     CreateShotRequest,
     PromptComponents,
@@ -100,6 +101,8 @@ async def update_shot(
             db.add(shot_character)
 
     await db.commit()
+    # 清空 session 缓存，避免 selectinload 返回 identity map 里的旧 characters 列表
+    db.expire_all()
     return await _load_shot_with_relations(db, shot_id)
 
 
@@ -253,6 +256,51 @@ async def lock_image(
     image.is_locked = True
     shot.locked_image_id = image_id
     shot.status = "image_locked"
+
+    await db.commit()
+
+
+async def lock_video(
+    db: AsyncSession, project_id: int, shot_id: int, video_id: int
+) -> None:
+    """锁定某条候选视频作为最终稿。
+
+    - 将该视频标为 is_locked=True，同 shot 下其他视频全部 is_locked=False
+    - 回写 shot.locked_video_id 与 shot.video_url（让 Preview 等老逻辑直接拿到最新的 URL）
+    - 将 shot.status 置为 completed（视频已锁 = 全流程完成）
+    """
+    result = await db.execute(
+        select(Shot)
+        .join(Scene, Shot.scene_id == Scene.id)
+        .where(Shot.id == shot_id, Scene.project_id == project_id)
+    )
+    shot = result.scalar_one_or_none()
+    if shot is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Shot not found"
+        )
+
+    video_result = await db.execute(
+        select(ShotVideo).where(
+            ShotVideo.id == video_id, ShotVideo.shot_id == shot_id
+        )
+    )
+    video = video_result.scalar_one_or_none()
+    if video is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Video not found for this shot",
+        )
+
+    await db.execute(
+        update(ShotVideo)
+        .where(ShotVideo.shot_id == shot_id)
+        .values(is_locked=False)
+    )
+    video.is_locked = True
+    shot.locked_video_id = video_id
+    shot.video_url = video.video_url
+    shot.status = "completed"
 
     await db.commit()
 

@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.dependencies import get_current_user, require_edit_lock
+from app.dependencies import get_current_user
 from app.models.user import User
 from app.schemas.common import ApiResponse
 from app.schemas.script import (

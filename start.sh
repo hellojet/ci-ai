@@ -12,6 +12,8 @@ set -e
 PROJECT_ROOT="$(cd "$(dirname "$0")" && pwd)"
 FRONTEND_PORT=5173
 BACKEND_PORT=8000
+REDIS_PORT=6379
+CELERY_CONCURRENCY=2
 LOG_DIR="$PROJECT_ROOT/.logs"
 
 # ──────────────────────────── 颜色 ────────────────────────────
@@ -54,6 +56,24 @@ kill_services() {
   pkill -f "vite.*$PROJECT_ROOT" 2>/dev/null && success "已清理残留 vite 进程" || true
   pkill -f "uvicorn.*app.main" 2>/dev/null && success "已清理残留 uvicorn 进程" || true
 
+  # 杀掉 Celery worker 进程（只杀 ci_ai_worker 相关的，不影响其它项目）
+  if [ -f "$LOG_DIR/celery.pid" ]; then
+    local celery_pid
+    celery_pid=$(cat "$LOG_DIR/celery.pid" 2>/dev/null || echo "")
+    if [ -n "$celery_pid" ] && kill -0 "$celery_pid" 2>/dev/null; then
+      # pkill -P 递归杀子进程（Celery 主进程会 fork 出 worker 子进程）
+      pkill -TERM -P "$celery_pid" 2>/dev/null || true
+      kill -TERM "$celery_pid" 2>/dev/null || true
+      sleep 1
+      kill -9 "$celery_pid" 2>/dev/null || true
+      success "已停止 Celery worker (PID: $celery_pid)"
+    fi
+    rm -f "$LOG_DIR/celery.pid"
+  fi
+  pkill -f "celery.*app.tasks.celery_app" 2>/dev/null && success "已清理残留 celery 进程" || true
+
+  # Redis 属于共享基础设施（可能其他项目也在用），默认不停
+  # 如需强制停止 Redis：./start.sh stop-all
   echo ""
 }
 
@@ -274,9 +294,105 @@ check_and_install_deps() {
   echo ""
 }
 
+# ──────────────────────────── Redis ────────────────────────────
+check_and_start_redis() {
+  # 已在跑：直接 OK
+  if redis-cli -h 127.0.0.1 -p "$REDIS_PORT" ping 2>/dev/null | grep -q PONG; then
+    success "Redis 已运行 (127.0.0.1:$REDIS_PORT)"
+    return 0
+  fi
+
+  # 没装
+  if ! command -v redis-server &>/dev/null; then
+    warn "未安装 Redis，正在尝试自动安装..."
+    case "$OS_ID" in
+      macos)
+        if command -v brew &>/dev/null; then
+          brew install redis
+        else
+          error "请先安装 Homebrew 或手动 brew install redis"
+          exit 1
+        fi
+        ;;
+      ubuntu|debian)
+        sudo apt-get update -qq && sudo apt-get install -y -qq redis-server
+        ;;
+      centos|rhel|fedora|alinux|alios|amzn)
+        sudo yum install -y -q redis || sudo dnf install -y -q redis
+        ;;
+      *)
+        error "无法自动安装 Redis（未识别的操作系统: $OS_ID），请手动安装后重试"
+        exit 1
+        ;;
+    esac
+  fi
+
+  info "启动 Redis (port $REDIS_PORT)..."
+  # macOS 优先用 brew services（开机自启、日志托管）
+  if [ "$OS_ID" = "macos" ] && command -v brew &>/dev/null; then
+    brew services start redis >/dev/null 2>&1 || true
+  else
+    # 其它平台：daemonize 模式直接后台跑
+    mkdir -p "$LOG_DIR"
+    redis-server --daemonize yes --port "$REDIS_PORT" --logfile "$LOG_DIR/redis.log" 2>/dev/null || \
+      nohup redis-server --port "$REDIS_PORT" > "$LOG_DIR/redis.log" 2>&1 &
+  fi
+
+  # 等 Redis 起来
+  local retries=0
+  while ! redis-cli -h 127.0.0.1 -p "$REDIS_PORT" ping 2>/dev/null | grep -q PONG; do
+    retries=$((retries + 1))
+    if [ $retries -gt 10 ]; then
+      error "Redis 启动超时，请检查 $LOG_DIR/redis.log"
+      exit 1
+    fi
+    sleep 1
+  done
+  success "Redis 已启动 (127.0.0.1:$REDIS_PORT)"
+}
+
+# ──────────────────────────── Celery worker ────────────────────────────
+start_celery_worker() {
+  mkdir -p "$LOG_DIR"
+  info "启动 Celery worker (concurrency=$CELERY_CONCURRENCY)..."
+  cd "$PROJECT_ROOT/backend"
+  source "$PROJECT_ROOT/backend/.venv/bin/activate"
+
+  # 快速检查 celery 可用性；没装则 pip install
+  if ! python -c "import celery" &>/dev/null; then
+    warn "未安装 celery，正在安装..."
+    python -m pip install -q celery redis
+  fi
+
+  nohup celery -A app.tasks.celery_app worker -l info --concurrency="$CELERY_CONCURRENCY" \
+    > "$LOG_DIR/celery.log" 2>&1 &
+  local celery_pid=$!
+  echo "$celery_pid" > "$LOG_DIR/celery.pid"
+
+  # 等 worker ready（扫 log 里的 "celery@xxx ready"）
+  local retries=0
+  while ! grep -q "ready\." "$LOG_DIR/celery.log" 2>/dev/null; do
+    retries=$((retries + 1))
+    if [ $retries -gt 15 ]; then
+      error "Celery worker 启动超时，请检查 $LOG_DIR/celery.log"
+      exit 1
+    fi
+    sleep 1
+  done
+  success "Celery worker 已启动 (PID: $celery_pid)"
+}
+
 # ──────────────────────────── 启动服务 ────────────────────────────
 start_services() {
   mkdir -p "$LOG_DIR"
+
+  # 1) Redis（Celery 依赖）
+  check_and_start_redis
+  echo ""
+
+  # 2) Celery worker（消费图生图/视频生成任务）
+  start_celery_worker
+  echo ""
 
   info "启动后端服务 (FastAPI on :$BACKEND_PORT)..."
   cd "$PROJECT_ROOT/backend"
@@ -340,19 +456,44 @@ show_status() {
   info "CI.AI 服务状态:"
   echo ""
 
-  if lsof -ti :$BACKEND_PORT &>/dev/null; then
-    success "后端服务: 运行中 (端口 $BACKEND_PORT)"
+  if redis-cli -h 127.0.0.1 -p "$REDIS_PORT" ping 2>/dev/null | grep -q PONG; then
+    success "Redis     : 运行中 (端口 $REDIS_PORT)"
   else
-    warn "后端服务: 未运行"
+    warn "Redis     : 未运行"
+  fi
+
+  if pgrep -f "celery.*app.tasks.celery_app" >/dev/null 2>&1; then
+    local celery_count
+    celery_count=$(pgrep -f "celery.*app.tasks.celery_app" | wc -l | tr -d ' ')
+    success "Celery    : 运行中 ($celery_count 个进程)"
+  else
+    warn "Celery    : 未运行"
+  fi
+
+  if lsof -ti :$BACKEND_PORT &>/dev/null; then
+    success "后端服务  : 运行中 (端口 $BACKEND_PORT)"
+  else
+    warn "后端服务  : 未运行"
   fi
 
   if lsof -ti :$FRONTEND_PORT &>/dev/null; then
-    success "前端服务: 运行中 (端口 $FRONTEND_PORT)"
+    success "前端服务  : 运行中 (端口 $FRONTEND_PORT)"
   else
-    warn "前端服务: 未运行"
+    warn "前端服务  : 未运行"
   fi
 
   echo ""
+}
+
+# ──────────────────────────── 停止全部（含 Redis）────────────────────────────
+stop_all() {
+  kill_services
+  # 连 Redis 一起停（谨慎：可能影响其他依赖 Redis 的项目）
+  if [ "$OS_ID" = "macos" ] && command -v brew &>/dev/null && brew services list 2>/dev/null | grep -q "^redis.*started"; then
+    brew services stop redis >/dev/null 2>&1 && success "已停止 Redis (brew services)" || true
+  else
+    pkill -f "redis-server.*:$REDIS_PORT" 2>/dev/null && success "已停止 Redis" || true
+  fi
 }
 
 # ──────────────────────────── 主入口 ────────────────────────────
@@ -365,8 +506,14 @@ main() {
 
   case "${1:-start}" in
     stop)
+      detect_os
       kill_services
-      success "所有服务已停止"
+      success "应用服务已停止（Redis 未停，使用 stop-all 可一并停止）"
+      ;;
+    stop-all)
+      detect_os
+      stop_all
+      success "所有服务（含 Redis）已停止"
       ;;
     status)
       show_status
@@ -377,7 +524,7 @@ main() {
       start_services
       ;;
     *)
-      echo "用法: $0 {start|stop|status}"
+      echo "用法: $0 {start|stop|stop-all|status}"
       exit 1
       ;;
   esac

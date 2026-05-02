@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.dependencies import get_current_user, require_edit_lock
+from app.dependencies import get_current_user
 from app.models.user import User
 from app.schemas.common import ApiResponse, PaginatedData
 from app.schemas.project import (
@@ -61,10 +61,10 @@ async def get_project_detail(
 async def update_project(
     project_id: int,
     data: UpdateProjectRequest,
-    user: User = Depends(require_edit_lock),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """更新项目信息，需要持有编辑锁。"""
+    """更新项目信息。"""
     project = await project_service.update_project(db, project_id, data)
     return ApiResponse(data=ProjectOut.model_validate(project))
 

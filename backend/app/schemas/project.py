@@ -32,9 +32,6 @@ class ProjectOut(BaseModel):
     status: str
     style: Optional[StyleBrief] = None
     shots_per_image: int
-    locked_by: Optional[int] = None
-    locker: Optional[UserBrief] = None
-    lock_heartbeat: Optional[datetime] = None
     creator: UserBrief
     created_at: datetime
     updated_at: datetime
@@ -59,7 +56,3 @@ class UpdateProjectRequest(BaseModel):
     shots_per_image: Optional[int] = None
 
 
-class LockResponse(BaseModel):
-    locked: bool
-    locked_by: UserBrief
-    lock_heartbeat: datetime

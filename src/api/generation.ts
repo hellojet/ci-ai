@@ -17,3 +17,7 @@ export async function retryTask(projectId: number, taskId: number): Promise<Gene
 export async function getTasks(projectId: number, params?: { status?: string; task_type?: string }): Promise<PaginatedData<GenerationTask>> {
   return apiClient.get(`/projects/${projectId}/tasks`, { params });
 }
+
+export async function getShotTasks(projectId: number, shotId: number): Promise<GenerationTask[]> {
+  return apiClient.get(`/projects/${projectId}/shots/${shotId}/tasks`);
+}

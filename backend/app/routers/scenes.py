@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.dependencies import get_current_user, require_edit_lock
+from app.dependencies import get_current_user
 from app.models.user import User
 from app.schemas.common import ApiResponse
 from app.schemas.scene import (
@@ -21,7 +21,7 @@ async def create_scene(
     project_id: int,
     body: CreateSceneRequest,
     db: AsyncSession = Depends(get_db),
-    _user: User = Depends(require_edit_lock),
+    _user: User = Depends(get_current_user),
 ):
     scene = await scene_service.create_scene(db, project_id, body)
     return ApiResponse(data=SceneOut.model_validate(scene))

@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from app.models.character import Character
     from app.models.scene import Scene
     from app.models.shot_image import ShotImage
+    from app.models.shot_video import ShotVideo
 
 
 class Shot(Base):
@@ -30,6 +31,21 @@ class Shot(Base):
     locked_image_id: Mapped[int | None] = mapped_column(
         Integer,
         ForeignKey("shot_images.id", use_alter=True),
+        nullable=True,
+    )
+    locked_video_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("shot_videos.id", use_alter=True),
+        nullable=True,
+    )
+    ref_environment_image_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("environment_images.id"),
+        nullable=True,
+    )
+    ref_character_view_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("character_views.id"),
         nullable=True,
     )
     video_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
@@ -63,6 +79,18 @@ class Shot(Base):
     locked_image: Mapped[ShotImage | None] = relationship(
         "ShotImage",
         foreign_keys=[locked_image_id],
+        post_update=True,
+        lazy="selectin",
+    )
+    videos: Mapped[list[ShotVideo]] = relationship(
+        "ShotVideo",
+        back_populates="shot",
+        foreign_keys="[ShotVideo.shot_id]",
+        lazy="selectin",
+    )
+    locked_video: Mapped[ShotVideo | None] = relationship(
+        "ShotVideo",
+        foreign_keys=[locked_video_id],
         post_update=True,
         lazy="selectin",
     )

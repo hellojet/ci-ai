@@ -1,10 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router';
-import { Typography, Button, Form, Input, Spin, Card, Image, Space, message } from 'antd';
-import { ArrowLeftOutlined, ThunderboltOutlined, PlusOutlined } from '@ant-design/icons';
+import { Typography, Button, Form, Input, Spin, Card, Image, Space, message, Popconfirm } from 'antd';
+import { ArrowLeftOutlined, ThunderboltOutlined, DeleteOutlined } from '@ant-design/icons';
 import * as environmentApi from '@/api/environments';
 import { useLocale } from '@/hooks/useLocale';
-import FileUpload from '@/components/FileUpload';
 import type { Environment } from '@/types/environment';
 
 const { Title, Text } = Typography;
@@ -61,11 +60,21 @@ export default function EnvironmentDetailPage() {
     try {
       await environmentApi.generateEnvironmentImage(environmentId);
       message.success(t('assets.imageGenerationStarted'));
-      setTimeout(fetchEnvironment, 3000);
+      await fetchEnvironment();
     } catch (error) {
       message.error((error as Error).message || t('assets.generateImageFailed'));
     } finally {
       setGeneratingImage(false);
+    }
+  };
+
+  const handleDeleteImage = async (imageId: number) => {
+    try {
+      await environmentApi.deleteEnvironmentImage(environmentId, imageId);
+      message.success(t('common.deleteSuccess') || '图片已删除');
+      await fetchEnvironment();
+    } catch (error) {
+      message.error((error as Error).message || '删除图片失败');
     }
   };
 
@@ -96,17 +105,54 @@ export default function EnvironmentDetailPage() {
             <TextArea rows={3} placeholder={t('assets.generationPromptPlaceholder')} />
           </Form.Item>
           <Form.Item label={t('assets.baseImage')}>
-            {environment.base_image_url && (
-              <Image src={environment.base_image_url} width={400} style={{ borderRadius: 8, marginBottom: 8 }} />
+            <div style={{ marginBottom: 8, color: '#999', fontSize: 12 }}>
+              {`Images: ${environment.images?.length ?? 0} / 20`}
+            </div>
+            {environment.images && environment.images.length > 0 && (
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))',
+                  gap: 8,
+                  marginBottom: 12,
+                }}
+              >
+                {environment.images.map((img) => (
+                  <div
+                    key={img.id}
+                    style={{
+                      position: 'relative',
+                      border: '1px solid #262626',
+                      borderRadius: 8,
+                      overflow: 'hidden',
+                    }}
+                  >
+                    <Image src={img.image_url} width="100%" style={{ display: 'block' }} />
+                    <Popconfirm
+                      title="Delete this image?"
+                      onConfirm={() => handleDeleteImage(img.id)}
+                      okText="Yes"
+                      cancelText="No"
+                    >
+                      <Button
+                        size="small"
+                        danger
+                        icon={<DeleteOutlined />}
+                        style={{ position: 'absolute', top: 4, right: 4 }}
+                      />
+                    </Popconfirm>
+                  </div>
+                ))}
+              </div>
             )}
-            <Space>
-              <FileUpload category="reference" accept="image/*" onSuccess={() => fetchEnvironment()}>
-                <Button icon={<PlusOutlined />}>{environment.base_image_url ? t('common.replace') : t('common.upload')}</Button>
-              </FileUpload>
-              <Button icon={<ThunderboltOutlined />} onClick={handleGenerateImage} loading={generatingImage}>
-                {t('assets.aiGenerate')}
-              </Button>
-            </Space>
+            <Button
+              icon={<ThunderboltOutlined />}
+              onClick={handleGenerateImage}
+              loading={generatingImage}
+              disabled={(environment.images?.length ?? 0) >= 20}
+            >
+              {t('assets.aiGenerate')}
+            </Button>
           </Form.Item>
           <Button type="primary" htmlType="submit" loading={saving}>{t('common.saveChanges')}</Button>
         </Form>

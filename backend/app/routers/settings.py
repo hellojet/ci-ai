@@ -1,10 +1,14 @@
-"""系统设置路由（管理员专用）。"""
+"""系统设置路由。
+
+- GET /settings：已登录用户均可查看（用于前端显示并发配额等信息）。
+- PUT /settings：仅管理员可修改。
+"""
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.dependencies import require_admin
+from app.dependencies import get_current_user, require_admin
 from app.models.user import User
 from app.schemas.common import ApiResponse
 from app.schemas.settings import (
@@ -20,7 +24,7 @@ router = APIRouter(prefix="/settings", tags=["Settings"])
 @router.get("", response_model=ApiResponse[SettingsListResponse])
 async def get_settings(
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(require_admin),
+    _user: User = Depends(get_current_user),
 ):
     merged = await settings_service.get_all_settings_merged(db)
     items = [

@@ -7,17 +7,18 @@ import {
   ThunderboltOutlined,
   PictureOutlined,
   VideoCameraOutlined,
+  EditOutlined,
 } from '@ant-design/icons';
 import { useLocale } from '@/hooks/useLocale';
 import { useProjectStore } from '@/stores/projectStore';
 import { useGenerationStore } from '@/stores/generationStore';
-import { exportProject } from '@/api/export';
-import LockBar from './LockBar';
+import { exportProjectJson, exportProjectZip } from '@/api/export';
 import ScriptPanel from './ScriptPanel';
 import Canvas from './Canvas';
 import PreviewPlayer from './PreviewPlayer';
 import ShotEditor from './ShotEditor';
 import type { Shot } from '@/types/shot';
+import type { Scene } from '@/types/scene';
 
 const { Text } = Typography;
 
@@ -29,8 +30,10 @@ export default function ProjectDetailPage() {
   const { generateAll } = useGenerationStore();
   const { t } = useLocale();
   const [selectedShot, setSelectedShot] = useState<Shot | null>(null);
+  const [selectedScene, setSelectedScene] = useState<Scene | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
-  const [scriptCollapsed, setScriptCollapsed] = useState(false);
+  // 剧本面板默认隐藏，需要时点击按钮展开
+  const [scriptCollapsed, setScriptCollapsed] = useState(true);
   const [previewCollapsed, setPreviewCollapsed] = useState(false);
 
   useEffect(() => {
@@ -45,6 +48,10 @@ export default function ProjectDetailPage() {
   const handleShotClick = useCallback((shot: Shot) => {
     setSelectedShot(shot);
     setEditorOpen(true);
+  }, []);
+
+  const handleSceneClick = useCallback((scene: Scene) => {
+    setSelectedScene(scene);
   }, []);
 
   const handleBatchGenerate = async (taskType: 'image' | 'video') => {
@@ -68,10 +75,34 @@ export default function ProjectDetailPage() {
     }
   };
 
-  const handleExport = async () => {
+  const triggerBrowserDownload = (blob: Blob, filename: string) => {
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleExportJson = async () => {
     try {
-      const result = await exportProject(projectId);
-      window.open(result.download_url, '_blank');
+      const data = await exportProjectJson(projectId);
+      const blob = new Blob([JSON.stringify(data, null, 2)], {
+        type: 'application/json',
+      });
+      triggerBrowserDownload(blob, `project_${projectId}.json`);
+      message.success(t('projectDetail.exportStarted'));
+    } catch (error) {
+      message.error((error as Error).message || t('projectDetail.exportFailed'));
+    }
+  };
+
+  const handleExportZip = async () => {
+    try {
+      const blob = await exportProjectZip(projectId);
+      triggerBrowserDownload(blob, `project_${projectId}.zip`);
       message.success(t('projectDetail.exportStarted'));
     } catch (error) {
       message.error((error as Error).message || t('projectDetail.exportFailed'));
@@ -100,9 +131,6 @@ export default function ProjectDetailPage() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 56px)', margin: -24 }}>
-      {/* Lock Bar */}
-      <LockBar projectId={projectId} onLockAcquired={() => {}} onLockReleased={() => {}} />
-
       {/* Project Title Bar */}
       <div
         style={{
@@ -123,46 +151,43 @@ export default function ProjectDetailPage() {
             <Text style={{ fontSize: 12, color: '#a855f7' }}>{currentProject.style.name}</Text>
           )}
         </Space>
+        {/* 剧本编辑按钮（默认隐藏，点击展开侧边） */}
+        <Button
+          type={scriptCollapsed ? 'default' : 'primary'}
+          size="small"
+          icon={<EditOutlined />}
+          onClick={() => setScriptCollapsed(!scriptCollapsed)}
+        >
+          {scriptCollapsed ? t('projectDetail.scriptToggle') : t('projectDetail.scriptToggleCollapse')}
+        </Button>
       </div>
 
       {/* Main Content: Three-Column Layout */}
-      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-        {/* Left: Script Panel */}
+      <div style={{ flex: 1, display: 'flex', overflow: 'hidden', position: 'relative' }}>
+        {/* Left: Script Panel - 默认隐藏，点击顶部"剧本"按钮后展开 */}
         {!scriptCollapsed && (
-          <div style={{ width: 300, flexShrink: 0 }}>
+          <div style={{ width: 340, flexShrink: 0 }}>
             <ScriptPanel projectId={projectId} />
           </div>
         )}
-        <Button
-          type="text"
-          size="small"
-          onClick={() => setScriptCollapsed(!scriptCollapsed)}
-          style={{
-            position: 'absolute',
-            left: scriptCollapsed ? 200 : 500,
-            top: '50%',
-            zIndex: 10,
-            background: '#1e1e1e',
-            borderRadius: '0 4px 4px 0',
-            color: '#888',
-            height: 40,
-            width: 16,
-            padding: 0,
-            fontSize: 10,
-          }}
-        >
-          {scriptCollapsed ? '▶' : '◀'}
-        </Button>
 
         {/* Center: Canvas */}
         <div style={{ flex: 1, overflow: 'hidden' }}>
-          <Canvas projectId={projectId} onShotClick={handleShotClick} />
+          <Canvas
+            projectId={projectId}
+            onShotClick={handleShotClick}
+            onSceneClick={handleSceneClick}
+            selectedSceneId={selectedScene?.id ?? null}
+          />
         </div>
 
-        {/* Right: Preview Player */}
+        {/* Right: Preview Player - 显示视频预览或选中场景的信息 */}
         {!previewCollapsed && (
-          <div style={{ width: 280, flexShrink: 0 }}>
-            <PreviewPlayer />
+          <div style={{ width: 320, flexShrink: 0 }}>
+            <PreviewPlayer
+              selectedScene={selectedScene}
+              onCloseScene={() => setSelectedScene(null)}
+            />
           </div>
         )}
         <Button
@@ -218,7 +243,10 @@ export default function ProjectDetailPage() {
           <Text type="secondary" style={{ fontSize: 12 }}>
             {t('projectDetail.shotsCount', { count: currentProject.scenes.reduce((sum, scene) => sum + scene.shots.length, 0) })}
           </Text>
-          <Button icon={<DownloadOutlined />} onClick={handleExport}>
+          <Button icon={<DownloadOutlined />} onClick={handleExportJson}>
+            {t('projectDetail.exportJson')}
+          </Button>
+          <Button icon={<DownloadOutlined />} onClick={handleExportZip}>
             {t('projectDetail.exportZip')}
           </Button>
         </Space>

@@ -35,13 +35,13 @@ class ParsedCharacterMatch(BaseModel):
 
 
 class ParsedShot(BaseModel):
-    title: str
-    narration: str
-    dialogue: str
-    action_description: str
-    camera_angle: str
-    matched_characters: list[ParsedCharacterMatch]
-    unmatched_characters: list[str]
+    title: str = ""
+    narration: str = ""
+    dialogue: str = ""
+    action_description: str = ""
+    camera_angle: str = "medium"
+    matched_characters: list[ParsedCharacterMatch] = []
+    unmatched_characters: list[str] = []
 
 
 class ParsedScene(BaseModel):

@@ -1,5 +1,8 @@
 export type TaskType = 'image' | 'video' | 'audio';
-export type TaskStatus = 'pending' | 'running' | 'success' | 'failed' | 'cancelled';
+// 必须与后端 app/tasks/generation_tasks.py 写入的状态一致：
+// pending（已入队未开始） → processing（执行中） → completed（成功） | failed（失败）
+// cancelled 为保留扩展项
+export type TaskStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled';
 
 export interface GenerationTask {
   id: number;

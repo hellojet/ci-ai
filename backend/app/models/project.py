@@ -30,12 +30,6 @@ class Project(Base):
     status: Mapped[str] = mapped_column(
         String(16), nullable=False, default="draft"
     )
-    locked_by: Mapped[int | None] = mapped_column(
-        Integer, ForeignKey("users.id"), nullable=True
-    )
-    lock_heartbeat: Mapped[str | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
     created_at: Mapped[str] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -48,9 +42,6 @@ class Project(Base):
 
     creator: Mapped[User] = relationship(
         "User", foreign_keys=[creator_id], lazy="selectin"
-    )
-    locker: Mapped[User | None] = relationship(
-        "User", foreign_keys=[locked_by], lazy="selectin"
     )
     style: Mapped[Style | None] = relationship("Style", lazy="selectin")
     scenes: Mapped[list[Scene]] = relationship(

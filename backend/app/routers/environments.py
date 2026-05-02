@@ -112,3 +112,18 @@ async def generate_environment_image(
 ):
     await environment_service.generate_environment_image(db, environment_id)
     return ApiResponse(message="Environment image generated successfully")
+
+
+@router.delete(
+    "/{environment_id}/images/{image_id}",
+    response_model=ApiResponse,
+)
+async def delete_environment_image(
+    environment_id: int,
+    image_id: int,
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """删除场景资产下的一张具体图片。对应测试用例 TC-3.4。"""
+    await environment_service.delete_environment_image(db, environment_id, image_id)
+    return ApiResponse(message="Environment image deleted successfully")

@@ -34,12 +34,22 @@ async def create_style(
     name: str = Form(...),
     prompt: str = Form(...),
     reference_image: Optional[UploadFile] = File(None),
+    reference_image_url: Optional[str] = Form(None),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    reference_image_url: Optional[str] = None
+    # 优先使用 reference_image_url（前端已上传完成）；否则吃 UploadFile 并落盘
     if reference_image and reference_image.filename:
-        reference_image_url = f"/uploads/styles/{reference_image.filename}"
+        from app.services import storage_service
+        from app.config import get_settings
+
+        file_data = await reference_image.read()
+        reference_image_url = storage_service.upload_file(
+            bucket_name=get_settings().minio_bucket_uploads,
+            file_data=file_data,
+            filename=reference_image.filename,
+            content_type=reference_image.content_type or "image/png",
+        )
 
     style = await style_service.create_style(
         db,
@@ -67,12 +77,21 @@ async def update_style(
     name: Optional[str] = Form(None),
     prompt: Optional[str] = Form(None),
     reference_image: Optional[UploadFile] = File(None),
+    reference_image_url: Optional[str] = Form(None),
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(get_current_user),
 ):
-    reference_image_url: Optional[str] = None
     if reference_image and reference_image.filename:
-        reference_image_url = f"/uploads/styles/{reference_image.filename}"
+        from app.services import storage_service
+        from app.config import get_settings
+
+        file_data = await reference_image.read()
+        reference_image_url = storage_service.upload_file(
+            bucket_name=get_settings().minio_bucket_uploads,
+            file_data=file_data,
+            filename=reference_image.filename,
+            content_type=reference_image.content_type or "image/png",
+        )
 
     style = await style_service.update_style(
         db,

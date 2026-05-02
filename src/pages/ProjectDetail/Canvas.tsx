@@ -2,20 +2,23 @@ import { Button, message, Typography } from 'antd';
 import { PlusOutlined } from '@ant-design/icons';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import type { DragEndEvent } from '@dnd-kit/core';
-import { sortableKeyboardCoordinates } from '@dnd-kit/sortable';
+import { arrayMove, sortableKeyboardCoordinates } from '@dnd-kit/sortable';
 import { useProjectStore } from '@/stores/projectStore';
 import SceneGroup from './SceneGroup';
 import type { Shot } from '@/types/shot';
+import type { Scene } from '@/types/scene';
 
 const { Text } = Typography;
 
 interface CanvasProps {
   projectId: number;
   onShotClick: (shot: Shot) => void;
+  onSceneClick?: (scene: Scene) => void;
+  selectedSceneId?: number | null;
 }
 
-export default function Canvas({ projectId, onShotClick }: CanvasProps) {
-  const { currentProject, isEditing, addScene, reorderShots } = useProjectStore();
+export default function Canvas({ projectId, onShotClick, onSceneClick, selectedSceneId }: CanvasProps) {
+  const { currentProject, addScene, reorderShots } = useProjectStore();
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -28,40 +31,67 @@ export default function Canvas({ projectId, onShotClick }: CanvasProps) {
 
     const activeShotId = Number(String(active.id).replace('shot-', ''));
     const overShotId = Number(String(over.id).replace('shot-', ''));
+    if (!activeShotId || !overShotId) return;
 
-    const allShots = currentProject.scenes.flatMap((scene) =>
-      scene.shots.map((shot) => ({ ...shot, sceneId: scene.id }))
+    // 把每个 scene 的 shots 按 sort_order 排序，建立 sceneId -> Shot[] 的工作副本
+    const sceneIdToShots = new Map<number, Shot[]>();
+    for (const scene of currentProject.scenes) {
+      sceneIdToShots.set(
+        scene.id,
+        [...scene.shots].sort((a, b) => a.sort_order - b.sort_order)
+      );
+    }
+
+    // 找到 active / over 所在的 scene
+    let activeSceneId: number | null = null;
+    let overSceneId: number | null = null;
+    for (const [sceneId, shots] of sceneIdToShots) {
+      if (shots.some((shot) => shot.id === activeShotId)) activeSceneId = sceneId;
+      if (shots.some((shot) => shot.id === overShotId)) overSceneId = sceneId;
+    }
+    if (activeSceneId === null || overSceneId === null) return;
+
+    const affectedSceneIds: number[] = [];
+
+    if (activeSceneId === overSceneId) {
+      // 同场景内移动：用 arrayMove
+      const shots = sceneIdToShots.get(activeSceneId)!;
+      const fromIndex = shots.findIndex((shot) => shot.id === activeShotId);
+      const toIndex = shots.findIndex((shot) => shot.id === overShotId);
+      if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) return;
+      sceneIdToShots.set(activeSceneId, arrayMove(shots, fromIndex, toIndex));
+      affectedSceneIds.push(activeSceneId);
+    } else {
+      // 跨场景移动：从源 scene 移除，插入目标 scene 的 over 位置
+      const sourceShots = sceneIdToShots.get(activeSceneId)!;
+      const targetShots = sceneIdToShots.get(overSceneId)!;
+      const movingShot = sourceShots.find((shot) => shot.id === activeShotId);
+      if (!movingShot) return;
+      const newSourceShots = sourceShots.filter((shot) => shot.id !== activeShotId);
+      const overIndex = targetShots.findIndex((shot) => shot.id === overShotId);
+      const newTargetShots = [...targetShots];
+      newTargetShots.splice(overIndex < 0 ? newTargetShots.length : overIndex, 0, movingShot);
+      sceneIdToShots.set(activeSceneId, newSourceShots);
+      sceneIdToShots.set(overSceneId, newTargetShots);
+      affectedSceneIds.push(activeSceneId, overSceneId);
+    }
+
+    // 把受影响场景的所有 shot 重新编号并组装请求体
+    const newOrders = affectedSceneIds.flatMap((sceneId) =>
+      (sceneIdToShots.get(sceneId) ?? []).map((shot, index) => ({
+        shot_id: shot.id,
+        scene_id: sceneId,
+        sort_order: index,
+      }))
     );
 
-    const activeShot = allShots.find((shot) => shot.id === activeShotId);
-    const overShot = allShots.find((shot) => shot.id === overShotId);
-
-    if (!activeShot || !overShot) return;
-
-    const targetSceneShots = allShots
-      .filter((shot) => shot.sceneId === overShot.sceneId)
-      .sort((a, b) => a.sort_order - b.sort_order);
-
-    const overIndex = targetSceneShots.findIndex((shot) => shot.id === overShotId);
-
-    const newOrders = targetSceneShots
-      .filter((shot) => shot.id !== activeShotId)
-      .map((shot, index) => ({
-        shot_id: shot.id,
-        scene_id: overShot.sceneId,
-        sort_order: index >= overIndex ? index + 1 : index,
-      }));
-
-    newOrders.push({
-      shot_id: activeShotId,
-      scene_id: overShot.sceneId,
-      sort_order: overIndex,
-    });
+    if (newOrders.length === 0) return;
 
     try {
       await reorderShots(newOrders);
-    } catch {
-      message.error('Failed to reorder shots');
+    } catch (error) {
+      const detail = (error as { message?: string })?.message;
+      message.error(detail ? `镜头排序失败：${detail}` : '镜头排序失败');
     }
   };
 
@@ -69,12 +99,12 @@ export default function Canvas({ projectId, onShotClick }: CanvasProps) {
     try {
       const sortOrder = currentProject?.scenes.length || 0;
       await addScene({
-        title: `Scene ${sortOrder + 1}`,
+        title: `场景 ${sortOrder + 1}`,
         sort_order: sortOrder,
       });
-      message.success('Scene added');
+      message.success('场景已添加');
     } catch (error) {
-      message.error((error as Error).message || 'Failed to add scene');
+      message.error((error as Error).message || '添加场景失败');
     }
   };
 
@@ -87,11 +117,9 @@ export default function Canvas({ projectId, onShotClick }: CanvasProps) {
           <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
             No scenes yet. Parse a script or add scenes manually.
           </Text>
-          {isEditing && (
-            <Button type="primary" icon={<PlusOutlined />} onClick={handleAddScene}>
-              Add Scene
-            </Button>
-          )}
+          <Button type="primary" icon={<PlusOutlined />} onClick={handleAddScene}>
+            Add Scene
+          </Button>
         </div>
       ) : (
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
@@ -100,21 +128,20 @@ export default function Canvas({ projectId, onShotClick }: CanvasProps) {
               key={scene.id}
               scene={scene}
               projectId={projectId}
-              isEditing={isEditing}
               onShotClick={onShotClick}
+              onSceneClick={onSceneClick}
+              isSelected={selectedSceneId === scene.id}
             />
           ))}
-          {isEditing && (
-            <Button
-              type="dashed"
-              block
-              icon={<PlusOutlined />}
-              onClick={handleAddScene}
-              style={{ marginTop: 8 }}
-            >
-              Add Scene
-            </Button>
-          )}
+          <Button
+            type="dashed"
+            block
+            icon={<PlusOutlined />}
+            onClick={handleAddScene}
+            style={{ marginTop: 8 }}
+          >
+            Add Scene
+          </Button>
         </DndContext>
       )}
     </div>

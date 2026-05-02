@@ -285,11 +285,12 @@ async def parse_script(db: AsyncSession, project_id: int) -> ParseResult:
             if not isinstance(shot_data, dict):
                 continue
 
-            shot_title = shot_data.get("title", "")
-            shot_narration = shot_data.get("narration", "")
-            shot_dialogue = shot_data.get("dialogue", "")
-            shot_action = shot_data.get("action_description", "")
-            shot_camera = shot_data.get("camera_angle", "medium")
+            # 使用 `or ""` 兜底：AI 返回 null/None 时也转成空串，避免 pydantic 校验失败
+            shot_title = shot_data.get("title") or ""
+            shot_narration = shot_data.get("narration") or ""
+            shot_dialogue = shot_data.get("dialogue") or ""
+            shot_action = shot_data.get("action_description") or ""
+            shot_camera = shot_data.get("camera_angle") or "medium"
             # 安全获取 characters 列表
             character_names = shot_data.get("characters") or []
             if not isinstance(character_names, list):

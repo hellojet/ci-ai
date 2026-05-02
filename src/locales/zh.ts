@@ -104,6 +104,8 @@ const zh = {
     notFound: '项目不存在',
     backToProjects: '返回项目列表',
     script: '剧本',
+    scriptToggle: '导入剧本',
+    scriptToggleCollapse: '收起剧本',
     scenes: '场景',
     shots: '分镜',
     shotsCount: '{count} 个分镜',
@@ -112,6 +114,7 @@ const zh = {
     generateAllImages: '全部生成图片',
     generateAllVideos: '全部生成视频',
     exportProject: '导出项目',
+    exportJson: '导出 JSON',
     exportZip: '导出 ZIP',
     batchStarted: '批量{type}生成已启动',
     batchFailed: '批量生成失败',
@@ -136,9 +139,6 @@ const zh = {
     generateImage: '生成图片',
     generateVideo: '生成视频',
     generateAudio: '生成音频',
-    lock: '获取编辑锁',
-    unlock: '释放编辑锁',
-    lockedBy: '编辑者',
     // 状态翻译
     draft: '草稿',
     in_progress: '进行中',
@@ -146,6 +146,36 @@ const zh = {
     image_generated: '图片已生成',
     video_generated: '视频已生成',
     audio_generated: '音频已生成',
+  },
+
+  // 分镜卡片上的生成状态文案
+  shotCard: {
+    generationStarted: '任务已提交',
+    generationFailed: '生成失败',
+    queued_image: '排队中…',
+    queued_video: '排队中…',
+    queued_audio: '排队中…',
+    running_image: '生成图片中…',
+    running_video: '生成视频中…',
+    running_audio: '生成音频中…',
+  },
+
+  // 任务 / 分镜状态徽章
+  status: {
+    shot: {
+      pending: '待处理',
+      images_generated: '图片已生成',
+      image_locked: '已锁定图片',
+      video_generated: '视频已生成',
+      completed: '已完成',
+    },
+    task: {
+      pending: '排队中',
+      processing: '生成中',
+      completed: '生成完成',
+      failed: '失败',
+      cancelled: '已取消',
+    },
   },
 
   // 资产库
@@ -230,6 +260,18 @@ const zh = {
     deleteViewFailed: '删除视图失败',
     viewGenerationStarted: '视图生成已启动',
     generateViewsFailed: '生成视图失败',
+    uploadView: '上传视图',
+    uploadViewSuccess: '视图上传成功',
+    uploadViewFailed: '视图上传失败',
+    viewStatusQueued: '排队中',
+    viewStatusGenerating: '生成中',
+    viewStatusFailed: '生成失败',
+    generateViews: '生成视图',
+    useSeedImage: '参考种子图片',
+    useSeedImageTip: '开启后，将把角色的种子图片作为参考传给生图模型，生成的视图会更贴合种子图的外观特征。参考图生成约需 2-3 分钟，请耐心等待。',
+    seedImageMissingTip: '当前角色还未设置种子图片，请先到角色信息里上传',
+    refSeedBadge: '参考',
+    refSeedBadgeTip: '本视图基于种子图片生成',
     imageGenerationStarted: '图片生成已启动',
     generateImageFailed: '生成图片失败',
     generationPrompt: '生成提示词',

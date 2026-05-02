@@ -1,4 +1,4 @@
-import { Upload, message } from 'antd';
+import { Upload, App } from 'antd';
 import { InboxOutlined } from '@ant-design/icons';
 import { uploadFile } from '@/api/upload';
 
@@ -12,15 +12,18 @@ interface FileUploadProps {
 }
 
 export default function FileUpload({ category, accept, onSuccess, children }: FileUploadProps) {
+  // 使用 App.useApp() 的 message，避免静态 message 无法继承 ConfigProvider 主题的告警
+  const { message } = App.useApp();
+
   const handleUpload = async (options: { file: File; onSuccess?: () => void; onError?: (err: Error) => void }) => {
     try {
       const result = await uploadFile(options.file, category);
       onSuccess(result.url, result.filename);
       options.onSuccess?.();
-      message.success('Upload successful');
+      message.success('上传成功');
     } catch (error) {
       options.onError?.(error as Error);
-      message.error('Upload failed');
+      message.error((error as Error).message || '上传失败');
     }
   };
 
@@ -45,7 +48,7 @@ export default function FileUpload({ category, accept, onSuccess, children }: Fi
       <p className="ant-upload-drag-icon">
         <InboxOutlined />
       </p>
-      <p className="ant-upload-text">Click or drag file to upload</p>
+      <p className="ant-upload-text">点击或拖拽文件到此处上传</p>
     </Dragger>
   );
 }
