@@ -1,69 +1,130 @@
-# React + TypeScript + Vite
+# CI.AI — 一站式 AI 视频工业化创作平台
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+> 一次建好角色和场景，所有项目复用；粘贴剧本就能开始拍片——让 AI 视频制作效率提升 10 倍。
 
-Currently, two official plugins are available:
+---
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## 这个产品解决什么问题
 
-## Expanding the ESLint configuration
+如果你用过市面上的 AI 视频工具，大概率踩过这些坑：
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+- 🎭 **分镜换脸**：每一镜重新生成人物，五个镜头下来主角"变成五个人"
+- 🏙 **场景变样**：同一间办公室，上一个镜头是北欧风，下一个突然变成日式
+- 📝 **提示词焦虑**：每个镜头都要拼一堆风格词、角色词、动作词，越写越乱
+- ⏳ **串行等待**：一个镜头生成完才能做下一个，100 个镜头要等一整天
+- 🔌 **锁死在一家供应商**：换模型就得重新接
 
-```js
-export default tseslint.config([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+CI.AI 的解法是把**角色、场景、风格资产化**：你只需要定义一次，之后所有项目、所有分镜都从"资产库"里引用，AI 自动保证视觉一致性，你把精力放在讲故事本身。
 
-      // Remove tseslint.configs.recommended and replace with this
-      ...tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      ...tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      ...tseslint.configs.stylisticTypeChecked,
+---
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+## 核心能力
+
+### 🗂 全局资产库：一次建好，永久复用
+- **角色**：输入描述 + 上传一张种子图 → 一键生成 8 个视角的参考图（正面 / 侧面 / 背面 / 各种表情）。每个角色最多 20 张视图，不满意可单张重生成
+- **场景**：输入关键词 → 生成多张场景图，维持同一场景下不同分镜的空间一致性
+- **风格**：一套视觉风格（提示词 + 参考图）绑定到项目，项目内所有分镜自动遵循
+
+### 📝 剧本智能拆解
+粘贴一段故事文本，或直接让 AI 帮你扩写。点一下"智能拆解"，系统自动：
+- 切成 `场景 > 分镜` 的树状结构
+- 识别每个分镜里出场的角色，自动挂到资产槽位
+- 匹配场景描述到已有的场景资产
+
+没有匹配到的，会提示你去资产库补建——不用回头翻剧本找引用。
+
+### 🎬 生产画布：场景包裹分镜
+所有分镜以卡片形式按场景分组展示，支持拖拽排序。每张卡片里：
+- **内容区**：旁白、台词、字幕
+- **资产槽位**：勾选关联的角色和场景图片
+- **Prompt 预览**：系统自动把"风格 + 场景图 + 角色图 + 视角 + 动作"拼成最终绘图指令，你不用写一个词
+
+### 🖼 候选图锁定：不满意就重来
+每个分镜默认生成 2 张候选图（数量可配），从里面挑一张满意的**锁定**，锁定后才能进入下一步"图转视频"。挑到的视频同样可以多次生成、挑选、锁定。
+
+### ⚡ 并行渲染，后台挂机
+点一下"全剧本生成"，后台自动按队列跑完所有分镜的图片 → 视频 → 音频。你可以关掉页面去干别的，回来看结果。失败的任务会自动重试，重试耗尽后也能手动重来。
+
+### 🔌 模型任选
+文本、图像、视频、音频四类 AI 能力，对应的 API 端点和密钥都在**系统设置页**里配置，不绑定任何一家供应商。想换模型？改个 URL 的事，不用重启服务。
+
+### 📦 一键打包导出
+做完之后一键导出 ZIP，视频 / 音频 / 字幕分类存放，直接丢进剪辑软件继续后期。
+
+---
+
+## 五步生产流程
+
+```
+① 资产预制        ② 剧本拆解        ③ 精调合成        ④ 批量生产        ⑤ 导出打包
+建角色/场景/风格  →  粘贴剧本自动拆  →  调动作/选视角   →  挂机跑图和视频   →  下载 ZIP
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+1. **资产预制**：先到资产中心创建好风格、角色（生成多视角参考图）、场景（生成多张场景图）
+2. **剧本拆解**：新建项目 → 粘贴剧本 / AI 扩写 → 一键拆成场景和分镜
+3. **精调合成**：在分镜卡片里调动作描述、点选镜头视角（特写 / 俯冲 / 摇移…），Prompt 自动合成
+4. **批量生产**：挂机跑完所有分镜图 → 人工挑选锁定 → 跑视频（自带音频）
+5. **导出打包**：预览不满意的重生成，满意了一键下载
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+单个用户初始 **1000 积分**，每张图 2 积分、每段视频 10 积分，在管理后台可以充值。
 
-export default tseslint.config([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+---
+
+## 快速开始
+
+### 环境准备
+
+- Node.js ≥ 18（推荐 20）
+- Python ≥ 3.10
+- Redis（用于异步任务队列，装好能跑就行）
+
+### 配置环境变量
+
+复制一份 `backend/.env.example` 到 `backend/.env`，最少要改这几项：
+
+```env
+# JWT 签名密钥，改成任意随机串
+JWT_SECRET_KEY=please-change-me
+
+# 四类 AI 能力的 API（可以在系统设置页启动后再配，也可以先放这里）
+AI_TEXT_ENDPOINT=https://your-llm-gateway/chat/completions
+AI_TEXT_API_KEY=sk-xxx
+AI_IMAGE_ENDPOINT=https://your-llm-gateway/images/generations
+AI_IMAGE_API_KEY=sk-xxx
+AI_VIDEO_ENDPOINT=https://your-llm-gateway/video-synthesis
+AI_VIDEO_API_KEY=sk-xxx
+
+# 对象存储（选填，不配会降级到本地目录；生产强烈建议配一个 CDN）
+QINIU_ACCESS_KEY=
+QINIU_SECRET_KEY=
+QINIU_BUCKET=
+QINIU_DOMAIN=
 ```
+
+其余字段保留默认即可。
+
+### 启动
+
+```bash
+./start.sh            # 一键拉起：Redis + 后端 + Celery worker + 前端
+./start.sh status     # 查看服务状态
+./start.sh stop       # 停止
+```
+
+启动成功后打开 http://localhost:5173，注册账号即可开始用。
+
+> 🐳 生产部署：仓库根目录有 `docker-compose.yml`，一条 `docker-compose up -d` 启动 PostgreSQL + Redis + MinIO + 后端 + Celery worker 的完整环境。
+
+---
+
+## 更多文档
+
+- 📖 **产品需求**：[`产品文档.md`](./产品文档.md) —— 完整的功能定义、业务规则、数据关系
+- 🛠 **开发文档**：[`开发文档.md`](./开发文档.md) —— 技术架构、模块设计、接口约定
+- ✅ **测试用例**：[`测试用例文档.md`](./测试用例文档.md) —— QA 用例清单
+
+---
+
+## License
+
+Internal project — 内部使用。
