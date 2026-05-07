@@ -76,10 +76,16 @@ async def delete_shot(
 async def get_shot_prompt(
     project_id: int,
     shot_id: int,
+    type: str = "image",
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(get_current_user),
 ):
-    result = await shot_service.get_shot_prompt(db, project_id, shot_id)
+    """查询某 shot 的提示词预览。
+
+    - `type` query 参数：image（默认）/ video，分别返回图片/视频提示词
+    - 响应包含 components（各模块原料）+ modules（开关状态）+ is_custom（是否在用自定义）
+    """
+    result = await shot_service.get_shot_prompt(db, project_id, shot_id, prompt_type=type)
     return ApiResponse(data=result)
 
 

@@ -1,5 +1,7 @@
 import { create } from 'zustand';
 import type { GenerationTask, TaskType } from '@/types/generation';
+import type { ImageModel } from '@/types/imageModel';
+import type { VideoModel } from '@/types/videoModel';
 import * as generationApi from '@/api/generation';
 
 // 任务终态集合：一旦任务到达这些状态就停止轮询
@@ -11,9 +13,17 @@ interface GenerationState {
   loading: boolean;
   // 记录每个 shot 当前是否正在轮询，以避免重复启动多个定时器
   pollingShotIds: Set<number>;
+  // 图像模型清单（由后端环境变量 AI_IMAGE_MODELS 配置）
+  imageModels: ImageModel[];
+  imageModelsLoaded: boolean;
+  // 视频模型清单（由后端环境变量 AI_VIDEO_MODELS 配置）
+  videoModels: VideoModel[];
+  videoModelsLoaded: boolean;
 
-  generateForShot: (projectId: number, shotId: number, taskType: TaskType) => Promise<void>;
-  generateAll: (projectId: number, taskType: TaskType) => Promise<void>;
+  fetchImageModels: () => Promise<ImageModel[]>;
+  fetchVideoModels: () => Promise<VideoModel[]>;
+  generateForShot: (projectId: number, shotId: number, taskType: TaskType, modelId?: string) => Promise<void>;
+  generateAll: (projectId: number, taskType: TaskType, modelId?: string) => Promise<void>;
   retryTask: (projectId: number, taskId: number) => Promise<void>;
   fetchTasks: (projectId: number) => Promise<void>;
   fetchShotTasks: (projectId: number, shotId: number) => Promise<GenerationTask[]>;
@@ -25,11 +35,43 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
   tasks: {},
   loading: false,
   pollingShotIds: new Set<number>(),
+  imageModels: [],
+  imageModelsLoaded: false,
+  videoModels: [],
+  videoModelsLoaded: false,
 
-  generateForShot: async (projectId, shotId, taskType) => {
+  fetchImageModels: async () => {
+    // 已经拉过就直接返回缓存，避免频繁打接口
+    if (get().imageModelsLoaded) return get().imageModels;
+    try {
+      const models = await generationApi.getImageModels();
+      set({ imageModels: models, imageModelsLoaded: true });
+      return models;
+    } catch {
+      set({ imageModels: [], imageModelsLoaded: true });
+      return [];
+    }
+  },
+
+  fetchVideoModels: async () => {
+    if (get().videoModelsLoaded) return get().videoModels;
+    try {
+      const models = await generationApi.getVideoModels();
+      set({ videoModels: models, videoModelsLoaded: true });
+      return models;
+    } catch {
+      set({ videoModels: [], videoModelsLoaded: true });
+      return [];
+    }
+  },
+
+  generateForShot: async (projectId, shotId, taskType, modelId) => {
     set({ loading: true });
     try {
-      const response = await generationApi.generateForShot(projectId, shotId, { task_type: taskType });
+      const response = await generationApi.generateForShot(projectId, shotId, {
+        task_type: taskType,
+        ...(modelId ? { model_id: modelId } : {}),
+      });
       set((state) => {
         const shotTasks = state.tasks[shotId] || [];
         const newTask: GenerationTask = {
@@ -53,10 +95,13 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
     }
   },
 
-  generateAll: async (projectId, taskType) => {
+  generateAll: async (projectId, taskType, modelId) => {
     set({ loading: true });
     try {
-      const response = await generationApi.generateAll(projectId, { task_type: taskType });
+      const response = await generationApi.generateAll(projectId, {
+        task_type: taskType,
+        ...(modelId ? { model_id: modelId } : {}),
+      });
       set((state) => {
         const updatedTasks = { ...state.tasks };
         for (const task of response.tasks) {

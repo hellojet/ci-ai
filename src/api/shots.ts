@@ -1,5 +1,5 @@
 import apiClient from './client';
-import type { Shot, CreateShotRequest, UpdateShotRequest, ShotOrder, PromptPreview } from '@/types/shot';
+import type { Shot, CreateShotRequest, UpdateShotRequest, ShotOrder, PromptPreview, PromptType } from '@/types/shot';
 
 export async function createShot(projectId: number, sceneId: number, data: CreateShotRequest): Promise<Shot> {
   return apiClient.post(`/projects/${projectId}/scenes/${sceneId}/shots`, data);
@@ -17,8 +17,12 @@ export async function reorderShots(projectId: number, shotOrders: ShotOrder[]): 
   return apiClient.put(`/projects/${projectId}/shots/reorder`, { shot_orders: shotOrders });
 }
 
-export async function getShotPrompt(projectId: number, shotId: number): Promise<PromptPreview> {
-  return apiClient.get(`/projects/${projectId}/shots/${shotId}/prompt`);
+export async function getShotPrompt(
+  projectId: number,
+  shotId: number,
+  type: PromptType = 'image',
+): Promise<PromptPreview> {
+  return apiClient.get(`/projects/${projectId}/shots/${shotId}/prompt`, { params: { type } });
 }
 
 export async function lockImage(projectId: number, shotId: number, imageId: number): Promise<void> {

@@ -48,6 +48,12 @@ class ShotOut(BaseModel):
     locked_video_id: Optional[int] = None
     ref_environment_image_id: Optional[int] = None
     ref_character_view_id: Optional[int] = None
+    ref_character_view_ids: Optional[list[int]] = None
+    # 提示词模块开关 + 用户自定义提示词。None 表示"全部启用"（兼容旧分镜）
+    prompt_modules_image: Optional[dict[str, bool]] = None
+    prompt_modules_video: Optional[dict[str, bool]] = None
+    custom_prompt_image: Optional[str] = None
+    custom_prompt_video: Optional[str] = None
     video_url: Optional[str] = None
     audio_url: Optional[str] = None
     sort_order: int
@@ -80,6 +86,12 @@ class UpdateShotRequest(BaseModel):
     character_ids: Optional[list[int]] = None
     ref_environment_image_id: Optional[int] = None
     ref_character_view_id: Optional[int] = None
+    ref_character_view_ids: Optional[list[int]] = None
+    # 提示词模块开关 + 自定义提示词。custom_prompt_* 传入 "" 视为清空（回到开关拼接模式）
+    prompt_modules_image: Optional[dict[str, bool]] = None
+    prompt_modules_video: Optional[dict[str, bool]] = None
+    custom_prompt_image: Optional[str] = None
+    custom_prompt_video: Optional[str] = None
     sort_order: Optional[int] = None
 
 
@@ -105,10 +117,20 @@ class PromptComponents(BaseModel):
     style: str = ""
     environment: str = ""
     characters: str = ""
-    camera: str = ""
     action: str = ""
+    dialogue: str = ""
+    camera: str = ""
 
 
 class PromptPreviewResponse(BaseModel):
+    """提示词预览。
+
+    - prompt：最终用于喂给 AI 的字符串
+    - components：每个模块的原始片段，供前端展示与开关 UI 使用
+    - is_custom：True 表示当前用的是用户自定义提示词，开关已失效
+    - modules：当前实际生效的开关状态（None 在响应里会展开为 dict）
+    """
     prompt: str
     components: PromptComponents
+    is_custom: bool = False
+    modules: dict[str, bool] = Field(default_factory=dict)

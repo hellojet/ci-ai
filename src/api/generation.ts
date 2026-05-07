@@ -1,6 +1,18 @@
 import apiClient from './client';
 import type { GenerateRequest, GenerateResponse, BatchGenerateResponse, GenerationTask } from '@/types/generation';
+import type { ImageModel, ImageModelListResponse } from '@/types/imageModel';
+import type { VideoModel, VideoModelListResponse } from '@/types/videoModel';
 import type { PaginatedData } from '@/types/common';
+
+export async function getImageModels(): Promise<ImageModel[]> {
+  const result = await apiClient.get<ImageModelListResponse>('/image-models');
+  return result.items;
+}
+
+export async function getVideoModels(): Promise<VideoModel[]> {
+  const result = await apiClient.get<VideoModelListResponse>('/video-models');
+  return result.items;
+}
 
 export async function generateForShot(projectId: number, shotId: number, data: GenerateRequest): Promise<GenerateResponse> {
   return apiClient.post(`/projects/${projectId}/shots/${shotId}/generate`, data);

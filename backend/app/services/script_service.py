@@ -2,6 +2,7 @@ import json
 import logging
 import re
 
+from json_repair import repair_json
 from fastapi import HTTPException, status
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -107,15 +108,64 @@ async def _fallback_parse(content: str) -> list[dict]:
 
 
 def _extract_json_from_response(raw_text: str) -> str:
-    """从 AI 响应中提取 JSON 内容，处理 markdown 代码块包裹的情况。"""
+    """从 AI 响应中提取候选 JSON 文本。
+
+    依次尝试：
+    1. 剥掉 ```json ... ``` / ``` ... ``` markdown 代码块
+    2. 截取"第一个 [ 或 { 到最后一个 ] 或 }"之间的子串，丢弃前后解释文字
+    3. 兜底返回原文，让后续的 json_repair 继续修复
+    """
     if not raw_text or not raw_text.strip():
         return ""
     text = raw_text.strip()
-    # 尝试提取 ```json ... ``` 或 ``` ... ``` 中的内容
+
+    # 1) markdown 代码块
     match = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
     if match:
-        return match.group(1).strip()
+        text = match.group(1).strip()
+        if text:
+            return text
+
+    # 2) 截取 JSON 主体：优先数组，其次对象
+    #    处理 AI 在 JSON 前后夹带 "以下是结果：..." / "希望对你有帮助" 的情况
+    for open_ch, close_ch in (("[", "]"), ("{", "}")):
+        start = text.find(open_ch)
+        end = text.rfind(close_ch)
+        if start != -1 and end != -1 and end > start:
+            return text[start : end + 1]
+
+    # 3) 兜底原样返回
     return text
+
+
+def _safe_parse_json(json_text: str):
+    """用 json_repair 容错解析 AI 输出的 JSON。
+
+    json_repair 能修复常见问题：
+    - 末尾被截断（未闭合的数组/对象/字符串）
+    - 多余/缺失的逗号
+    - 使用单引号、Python 风格 True/False/None 等非标准语法
+    - 字符串内部未转义的引号
+
+    仍无法修复时返回 None，由调用方走 fallback。
+    """
+    if not json_text:
+        return None
+    # 先按标准 JSON 解析，走常规快路径
+    try:
+        return json.loads(json_text)
+    except json.JSONDecodeError:
+        pass
+    # 标准解析失败：交给 json_repair 尽力修复
+    try:
+        repaired = repair_json(json_text, return_objects=True)
+    except Exception as exc:
+        logger.warning("json_repair 修复失败: %s", exc)
+        return None
+    # json_repair 在完全无法修复时会返回空字符串而非抛异常，这里统一视为失败
+    if repaired == "" or repaired is None:
+        return None
+    return repaired
 
 
 def _validate_parsed_scenes(data) -> list[dict] | None:
@@ -171,10 +221,22 @@ async def _ai_parse(content: str, db: AsyncSession) -> list[dict] | None:
             logger.warning("AI parse 返回空内容")
             return None
 
-        parsed = json.loads(json_text)
+        parsed = _safe_parse_json(json_text)
+        if parsed is None:
+            # 打印前 300 字符帮助排查（raw 可能很长）
+            preview = (raw_result or "")[:300].replace("\n", " ")
+            logger.warning(
+                "AI parse JSON 解析+修复均失败，原始响应预览: %s",
+                preview,
+            )
+            return None
+
         validated = _validate_parsed_scenes(parsed)
         if validated is None:
-            logger.warning("AI parse 返回的 JSON 结构不符合预期: %s", type(parsed).__name__)
+            logger.warning(
+                "AI parse 返回的 JSON 结构不符合预期: %s",
+                type(parsed).__name__,
+            )
             return None
         return validated
     except Exception as exc:

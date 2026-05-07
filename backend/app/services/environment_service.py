@@ -1,9 +1,6 @@
-import asyncio
-import base64
 import logging
 from typing import Optional
 
-import httpx
 from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,8 +8,6 @@ from sqlalchemy.orm import selectinload
 
 from app.models.environment import Environment
 from app.models.environment_image import EnvironmentImage
-from app.services.qiniu_storage import upload_bytes
-from app.services.settings_service import get_setting_value
 from app.utils.pagination import paginate
 
 MAX_IMAGES_PER_ENVIRONMENT = 20
@@ -55,12 +50,14 @@ async def create_environment(
     description: Optional[str] = None,
     prompt: Optional[str] = None,
     base_image_url: Optional[str] = None,
+    seed_image_url: Optional[str] = None,
 ) -> Environment:
     environment = Environment(
         name=name,
         description=description,
         prompt=prompt,
         base_image_url=base_image_url,
+        seed_image_url=seed_image_url,
         creator_id=creator_id,
     )
     db.add(environment)
@@ -76,6 +73,7 @@ async def update_environment(
     description: Optional[str] = None,
     prompt: Optional[str] = None,
     base_image_url: Optional[str] = None,
+    seed_image_url: Optional[str] = None,
 ) -> Environment:
     environment = await get_environment(db, environment_id)
     if name is not None:
@@ -86,6 +84,8 @@ async def update_environment(
         environment.prompt = prompt
     if base_image_url is not None:
         environment.base_image_url = base_image_url
+    if seed_image_url is not None:
+        environment.seed_image_url = seed_image_url
     await db.commit()
     await db.refresh(environment)
     return environment
@@ -97,168 +97,148 @@ async def delete_environment(db: AsyncSession, environment_id: int) -> None:
     await db.commit()
 
 
-async def generate_environment_image(
+async def generate_environment_images(
     db: AsyncSession,
     environment_id: int,
-) -> EnvironmentImage:
-    """为场景资产生成一张新图片，追加到 environment.images 列表中（不覆盖已有图片）。
+    count: int,
+    view_types: list[str],
+    use_seed_image: bool = False,
+    model_id: Optional[str] = None,
+) -> list[EnvironmentImage]:
+    """异步化：只落占位 image(status=queued) + 派发 Celery 任务，立即返回。
 
-    对应测试用例 TC-3.2（首次生成）、TC-3.3（再次生成 append）。
-    上限：同一 environment 最多 20 张图片。
+    对齐 character_service.generate_views 的设计：
+    - 校验配额（最多 20 张）、模型配置
+    - 每张图在数据库里先落一条 status=queued 的占位行（image_url 为空串占位）
+    - use_seed_image=True 时在占位行打标，worker 把 environment.seed_image_url 作为参考图传给图生图 API；
+      种子图缺失时 worker 自动降级为纯文生图
+    - model_id 指定本次要用的图像模型（AI_IMAGE_MODELS 里的某一项 id），不传则走默认模型
+    - 把 image_id 交给 Celery worker 逐个调用图像 API 回填，状态按 queued → generating → completed/failed 流转
+    - 返回刚创建的占位 image 列表，供前端立即渲染 loading 卡片
     """
     environment = await get_environment(db, environment_id)
     current_count = len(environment.images)
 
-    if current_count >= MAX_IMAGES_PER_ENVIRONMENT:
+    if current_count + count > MAX_IMAGES_PER_ENVIRONMENT:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
-                f"场景图片已达上限：{MAX_IMAGES_PER_ENVIRONMENT} 张，"
-                "请先删除已有图片后再生成。"
+                f"场景图片已达上限：已有 {current_count} 张，再生成 {count} 张将超过 "
+                f"{MAX_IMAGES_PER_ENVIRONMENT} 张上限。"
             ),
         )
 
-    # 从系统设置中读取图像生成 API 配置（数据库优先，.env 兜底）
-    endpoint = await get_setting_value(db, "api.image.endpoint")
-    model = await get_setting_value(db, "api.image.model")
-    api_key = await get_setting_value(db, "api.image.api_key")
-    timeout = int(await get_setting_value(db, "api.image.timeout", "180"))
+    # 解析本次要用的图像模型：优先走 AI_IMAGE_MODELS 清单，回落到 .env 默认
+    resolved_model_key = _resolve_image_model_key(model_id)
 
-    if not endpoint or not api_key:
-        raise HTTPException(
-            status_code=status.HTTP_501_NOT_IMPLEMENTED,
-            detail="图像生成 API 未配置，请在系统设置或 .env 中配置 endpoint 和 api_key。",
+    # use_seed_image=True 但种子图不存在时，记录一下但不拒绝请求（worker 里会降级并在 error_message 留痕）
+    effective_use_seed = bool(use_seed_image and environment.seed_image_url)
+    if use_seed_image and not environment.seed_image_url:
+        logger.warning(
+            "场景 %s 请求参考种子图生成，但 seed_image_url 为空，将降级为纯文生图",
+            environment_id,
         )
 
-    # 构造 prompt；多次生成时在 prompt 中加入序号提示以增加多样性
-    base_prompt = environment.prompt or environment.description or environment.name
-    prompt = f"{base_prompt}，场景环境图，高质量，宽幅构图，电影感，视角 {current_count + 1}"
+    # 逐个落占位 image，拿到持久化的 image_id 后派发任务
+    current_max_order = max((i.sort_order for i in environment.images), default=-1)
+    effective_view_types = (view_types or [])[:count]
+    if len(effective_view_types) < count:
+        # view_types 数量不够时补 None（让 worker 走默认 prompt）
+        effective_view_types = effective_view_types + [None] * (count - len(effective_view_types))
 
-    # 调用图像生成 API（支持限流 + 网络异常重试，10 次 + 指数退避封顶 60s）
-    max_retries = 10
-    last_error: Optional[str] = None
-    response: Optional[httpx.Response] = None
+    placeholders: list[EnvironmentImage] = []
+    for idx, view_type in enumerate(effective_view_types):
+        image = EnvironmentImage(
+            environment_id=environment_id,
+            image_url="",  # 占位，worker 回填
+            view_type=view_type,
+            sort_order=current_max_order + 1 + idx,
+            status="queued",
+            use_seed_image=effective_use_seed,
+            model_key=resolved_model_key,
+        )
+        db.add(image)
+        placeholders.append(image)
+    await db.commit()
+    for img in placeholders:
+        await db.refresh(img)
 
-    for attempt in range(1, max_retries + 1):
-        retry_delay = min(60, int(5 * (1.6 ** (attempt - 1))))
+    # 延迟 import，避免循环引用（tasks 依赖 models）
+    from app.tasks.generation_tasks import generate_environment_image_task
+
+    for img in placeholders:
         try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                response = await client.post(
-                    endpoint,
-                    headers={
-                        "Content-Type": "application/json",
-                        "Authorization": f"Bearer {api_key}",
-                    },
-                    json={
-                        "prompt": prompt,
-                        "model": model,
-                        "n": 1,
-                        "size": "1536x1024",
-                        "quality": "low",
-                        "output_format": "png",
-                        "output_compression": 100,
-                    },
-                )
-        except (httpx.ReadError, httpx.ConnectError, httpx.RemoteProtocolError,
-                httpx.ReadTimeout, httpx.ConnectTimeout, httpx.WriteError) as exc:
-            last_error = f"network error: {type(exc).__name__}: {exc}"
-            logger.warning(
-                "图像生成 API 网络错误（第 %d/%d 次）：%s，%d 秒后重试...",
-                attempt, max_retries, last_error, retry_delay,
-            )
-            if attempt < max_retries:
-                await asyncio.sleep(retry_delay)
-                continue
+            generate_environment_image_task.delay(img.id)
+        except Exception as exc:
+            logger.exception("派发 generate_environment_image_task 失败: image_id=%s", img.id)
+            img.status = "failed"
+            img.error_message = f"dispatch failed: {exc}"
+    await db.commit()
+
+    return placeholders
+
+
+def _resolve_image_model_key(model_id: Optional[str]) -> Optional[str]:
+    """解析并校验图像模型 id。
+
+    - 传了 model_id：必须在 AI_IMAGE_MODELS 清单里找到，否则 400
+    - 没传 model_id：优先用默认模型（AI_IMAGE_MODELS 中 default=true 的那条）
+    - 清单完全为空时返回 None，worker 会回落到 .env 的 AI_IMAGE_* 配置（仅支持 images_generations 协议）
+    """
+    from app.services import image_models_service
+
+    if model_id:
+        # strict=True：找不到就直接报错，避免把用户的显式选择偷偷回退成默认模型
+        model = image_models_service.get_model_by_id(model_id, strict=True)
+        if model is None:
             raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"图像生成 API 网络异常（已重试 {max_retries} 次）: {last_error}",
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"未知的图像模型：{model_id}，请先在 AI_IMAGE_MODELS 环境变量中配置。",
             )
+        return model["id"]
 
-        if response.status_code == 200:
-            # 兜底：AI 网关偶尔返回 200 但 body 为空或非 JSON，按限流策略重试
-            try:
-                data = response.json()
-                break
-            except Exception as json_exc:
-                body_text = response.text[:500]
-                last_error = f"200 but invalid json: {json_exc}, body={body_text!r}"
-                if attempt < max_retries:
-                    logger.warning(
-                        "场景环境图像生成 API 返回 200 但 body 解析失败（第 %d/%d 次），%d 秒后重试... %s",
-                        attempt, max_retries, retry_delay, last_error,
-                    )
-                    await asyncio.sleep(retry_delay)
-                    continue
-                raise HTTPException(
-                    status_code=status.HTTP_502_BAD_GATEWAY,
-                    detail=f"图像生成 API 返回无效 JSON（已重试 {max_retries} 次）: {last_error}",
-                )
+    default_model = image_models_service.get_default_model()
+    if default_model is not None:
+        return default_model["id"]
+    return None
 
-        body_text = response.text[:500]
-        is_rate_limited = (
-            response.status_code == 429
-            or "429" in body_text
-            or "限流" in body_text
-            or "EngineOverloaded" in body_text
-            or "too many requests" in body_text.lower()
-        )
 
-        if is_rate_limited and attempt < max_retries:
-            logger.warning(
-                "图像生成 API 限流（第 %d/%d 次），%d 秒后重试...",
-                attempt, max_retries, retry_delay,
-            )
-            await asyncio.sleep(retry_delay)
-            continue
+async def upload_environment_image(
+    db: AsyncSession,
+    environment_id: int,
+    image_url: str,
+    view_type: Optional[str] = None,
+) -> EnvironmentImage:
+    """用户手动上传一张场景图。image_url 必须是已通过 /uploads 上传完成的 URL。"""
+    environment = await get_environment(db, environment_id)
 
-        last_error = f"status={response.status_code}, body={body_text}"
-        logger.error("场景环境图像生成 API 返回错误: %s", last_error)
+    if len(environment.images) >= MAX_IMAGES_PER_ENVIRONMENT:
         raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"图像生成 API 调用失败（已重试 {max_retries} 次）: {last_error}",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"场景图片已达上限（最多 {MAX_IMAGES_PER_ENVIRONMENT} 张）。",
         )
-
-    assert response is not None
-    image_data_list = data.get("data", [])
-    if not image_data_list:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="图像生成 API 未返回有效图片数据",
-        )
-
-    image_item = image_data_list[0]
-    image_url = image_item.get("url", "")
-
-    # 如果返回的是 base64 编码的图片，上传到七牛云
-    if not image_url and image_item.get("b64_json"):
-        image_bytes = base64.b64decode(image_item["b64_json"])
-        image_url = upload_bytes(image_bytes, extension="png", folder="environments")
-
     if not image_url:
         raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="图像生成 API 返回数据中无 url 或 b64_json",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="image_url is required",
         )
 
-    # 以 append 方式新增一张图片记录
+    current_max_order = max((i.sort_order for i in environment.images), default=-1)
     new_image = EnvironmentImage(
         environment_id=environment_id,
         image_url=image_url,
-        sort_order=current_count,
+        view_type=view_type,
+        sort_order=current_max_order + 1,
+        status="completed",
     )
     db.add(new_image)
 
-    # 首次生成时，同步写入 environment.base_image_url 便于兼容旧前端
-    if current_count == 0:
+    # 首次有图时，同步写入 environment.base_image_url 兼容旧前端
+    if not environment.base_image_url:
         environment.base_image_url = image_url
 
     await db.commit()
     await db.refresh(new_image)
-
-    logger.info(
-        "场景环境 %s 新增图片成功：image_id=%s, url=%s, 总数=%s",
-        environment_id, new_image.id, image_url, current_count + 1,
-    )
     return new_image
 
 

@@ -152,6 +152,11 @@ const en: Locale = {
     running_image: 'Generating image…',
     running_video: 'Generating video…',
     running_audio: 'Generating audio…',
+    selectImageModel: 'Select image model',
+    noImageModels: 'No image model configured on backend. Ask ops to set AI_IMAGE_MODELS.',
+    selectVideoModel: 'Select video model',
+    noVideoModels: 'No video model configured on backend. Ask ops to set AI_VIDEO_MODELS.',
+    generateWithModel: 'Generate with {model}',
   },
 
   status: {
@@ -262,6 +267,22 @@ const en: Locale = {
     generationPromptPlaceholder: 'Enter image generation prompt...',
     aiGenerate: 'AI Generate',
     notConfigured: 'Not configured',
+    // Environment assets: seed image / image grid / model dropdown
+    generateEnvironmentImages: 'Generate Environment Images',
+    environmentImages: 'Environment Images',
+    uploadImage: 'Upload Image',
+    uploadImageSuccess: 'Image uploaded',
+    uploadImageFailed: 'Failed to upload image',
+    deleteImageConfirm: 'Delete this image?',
+    deleteImageSuccess: 'Image deleted',
+    deleteImageFailed: 'Failed to delete image',
+    seedImage: 'Seed Image',
+    environmentSeedImageTip: 'When enabled, the environment seed image is sent to the image model as a reference, making generated images closer to the seed layout and mood. Generation with a reference takes about 2-3 minutes.',
+    environmentSeedMissingTip: 'This environment has no seed image yet. Please upload one on the left first.',
+    environmentViewTypes: 'Angle / Composition',
+    imageModel: 'Image Model',
+    imageModelPlaceholder: 'Pick an image model',
+    noImageModels: 'No image models available. Configure AI_IMAGE_MODELS on backend.',
   },
 
   settings: {
@@ -283,6 +304,10 @@ const en: Locale = {
     timeout: 'Timeout (s)',
     currentConcurrency: 'Current concurrency',
     adminOnly: 'Only administrators can modify API configurations. Contact your admin for changes.',
+    imageModelsManagedByEnv: 'Image model catalog is managed by the backend env var AI_IMAGE_MODELS. Users pick one from a dropdown on the generation screen.',
+    availableImageModels: 'Available models',
+    imageModelsEmpty: 'No image models configured. Ask ops to fill AI_IMAGE_MODELS in .env.',
+    defaultModelTag: 'default',
   },
 
   admin: {

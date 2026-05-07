@@ -21,6 +21,8 @@ export interface GenerationTask {
 
 export interface GenerateRequest {
   task_type: TaskType;
+  /** 图像任务时可选的模型 id；其它任务类型后端会忽略。 */
+  model_id?: string;
 }
 
 export interface GenerateResponse {
@@ -28,6 +30,7 @@ export interface GenerateResponse {
   task_type: TaskType;
   status: TaskStatus;
   credits_cost: number;
+  model_key?: string;
 }
 
 export interface BatchGenerateResponse {

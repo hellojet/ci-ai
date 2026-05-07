@@ -140,21 +140,22 @@ async def reorder_shots(
     await db.commit()
 
 
-async def get_shot_prompt(
-    db: AsyncSession, project_id: int, shot_id: int
-) -> PromptPreviewResponse:
-    result = await db.execute(
-        select(Shot)
-        .options(selectinload(Shot.characters))
-        .join(Scene, Shot.scene_id == Scene.id)
-        .where(Shot.id == shot_id, Scene.project_id == project_id)
-    )
-    shot = result.scalar_one_or_none()
-    if shot is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Shot not found"
-        )
+# 提示词模块的统一定义：键 + 默认开关 + 拼接顺序
+PROMPT_MODULE_KEYS = ("style", "environment", "characters", "action", "dialogue", "camera")
+DEFAULT_PROMPT_MODULES: dict[str, bool] = {key: True for key in PROMPT_MODULE_KEYS}
 
+
+def _normalize_modules(raw: dict | None) -> dict[str, bool]:
+    """把库里存的 modules 字典补齐成完整的 6 键开关；None 视为全开（兼容旧数据）。"""
+    if not raw:
+        return dict(DEFAULT_PROMPT_MODULES)
+    return {key: bool(raw.get(key, True)) for key in PROMPT_MODULE_KEYS}
+
+
+async def _collect_prompt_components(
+    db: AsyncSession, project_id: int, shot: Shot
+) -> PromptComponents:
+    """汇集 shot 的所有提示词原料（不应用开关）。"""
     # Load scene with environment
     scene_result = await db.execute(
         select(Scene)
@@ -170,16 +171,15 @@ async def get_shot_prompt(
     )
     project = project_result.scalar_one_or_none()
 
-    # Build prompt components
     style_prompt = ""
     if project and project.style_id:
         from app.models.style import Style
         style_result = await db.execute(
             select(Style).where(Style.id == project.style_id)
         )
-        style = style_result.scalar_one_or_none()
-        if style:
-            style_prompt = style.prompt or ""
+        style_obj = style_result.scalar_one_or_none()
+        if style_obj:
+            style_prompt = style_obj.prompt or ""
 
     environment_prompt = ""
     if scene.environment:
@@ -189,32 +189,90 @@ async def get_shot_prompt(
         char.visual_prompt or char.name for char in shot.characters
     )
 
-    camera_prompt = shot.camera_angle or ""
-    action_prompt = shot.action_description or ""
-
-    components = PromptComponents(
+    return PromptComponents(
         style=style_prompt,
         environment=environment_prompt,
         characters=characters_prompt,
-        camera=camera_prompt,
-        action=action_prompt,
+        action=shot.action_description or "",
+        dialogue=shot.dialogue or "",
+        camera=shot.camera_angle or "",
     )
 
-    # Assemble full prompt
-    prompt_parts = [
-        part
-        for part in [
-            style_prompt,
-            environment_prompt,
-            characters_prompt,
-            action_prompt,
-            f"camera: {camera_prompt}" if camera_prompt else "",
-        ]
-        if part
-    ]
-    full_prompt = ", ".join(prompt_parts)
 
-    return PromptPreviewResponse(prompt=full_prompt, components=components)
+def _assemble_prompt_from_modules(
+    components: PromptComponents, modules: dict[str, bool]
+) -> str:
+    """按 PROMPT_MODULE_KEYS 顺序，结合开关把 components 拼成一段提示词。"""
+    parts: list[str] = []
+    for key in PROMPT_MODULE_KEYS:
+        if not modules.get(key, True):
+            continue
+        value = getattr(components, key, "") or ""
+        if not value:
+            continue
+        # camera 给个语义前缀，让模型知道这是机位信息而非主体描述
+        if key == "camera":
+            parts.append(f"camera: {value}")
+        elif key == "dialogue":
+            # dialogue 加引号，避免和动作描述粘在一起被模型误读
+            parts.append(f'dialogue: "{value}"')
+        else:
+            parts.append(value)
+    return ", ".join(parts)
+
+
+async def get_shot_prompt(
+    db: AsyncSession,
+    project_id: int,
+    shot_id: int,
+    prompt_type: str = "image",
+) -> PromptPreviewResponse:
+    """生成 shot 的提示词预览。
+
+    - prompt_type: "image" 或 "video"，决定读哪一套 modules / custom_prompt
+    - 优先级：custom_prompt_<type> 非空 → 直接返回（is_custom=True）
+              否则 → 按 modules 开关拼接 components
+    """
+    if prompt_type not in ("image", "video"):
+        raise HTTPException(status_code=400, detail="prompt_type must be 'image' or 'video'")
+
+    result = await db.execute(
+        select(Shot)
+        .options(selectinload(Shot.characters))
+        .join(Scene, Shot.scene_id == Scene.id)
+        .where(Shot.id == shot_id, Scene.project_id == project_id)
+    )
+    shot = result.scalar_one_or_none()
+    if shot is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Shot not found"
+        )
+
+    components = await _collect_prompt_components(db, project_id, shot)
+
+    custom_prompt = (
+        shot.custom_prompt_image if prompt_type == "image" else shot.custom_prompt_video
+    )
+    raw_modules = (
+        shot.prompt_modules_image if prompt_type == "image" else shot.prompt_modules_video
+    )
+    modules = _normalize_modules(raw_modules)
+
+    if custom_prompt and custom_prompt.strip():
+        return PromptPreviewResponse(
+            prompt=custom_prompt,
+            components=components,
+            is_custom=True,
+            modules=modules,
+        )
+
+    full_prompt = _assemble_prompt_from_modules(components, modules)
+    return PromptPreviewResponse(
+        prompt=full_prompt,
+        components=components,
+        is_custom=False,
+        modules=modules,
+    )
 
 
 async def lock_image(

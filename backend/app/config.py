@@ -43,17 +43,33 @@ class Settings(BaseSettings):
     ai_text_concurrency: int = 1
     ai_text_timeout: int = 60
     # 图像生成
+    # ai_image_endpoint / ai_image_model / ai_image_api_key 保留作为"默认图像模型"的兜底配置，
+    # 真正的多模型清单请使用 ai_image_models（JSON 字符串），前端在生成画面里做下拉选择。
     ai_image_endpoint: str = ""
     ai_image_model: str = ""
     ai_image_api_key: str = ""
     ai_image_concurrency: int = 1
     ai_image_timeout: int = 120
+    # 图像模型清单（JSON 字符串），示例：
+    # [{"id":"gpt-image-2","label":"GPT Image 2","endpoint":"https://.../images/generations",
+    #   "api_key":"fai-...","model":"gpt-image-2","protocol":"images_generations","default":true},
+    #  {"id":"gemini-2.5-flash-image-preview","label":"Gemini 2.5 Flash Image",
+    #   "endpoint":"https://.../chat/completions","api_key":"fai-...",
+    #   "model":"gemini-2.5-flash-image-preview","protocol":"chat_completions_modalities"}]
+    ai_image_models: str = ""
     # 视频生成
     ai_video_endpoint: str = ""
     ai_video_model: str = ""
     ai_video_api_key: str = ""
     ai_video_concurrency: int = 1
     ai_video_timeout: int = 300
+    # 视频模型清单（JSON 字符串）：与 ai_image_models 同构。
+    # 字段：id/label/display_name/endpoint/api_key/model/protocol/default
+    # 当前 protocol 仅支持 "dashscope_async_i2v"（dashscope 异步任务模式：submit + poll）
+    # 示例：[{"id":"happyhorse-1.0-i2v","label":"HappyHorse 1.0 I2V","display_name":"快马 1.0",
+    #   "endpoint":"https://.../video-synthesis","api_key":"fai-...",
+    #   "model":"happyhorse-1.0-i2v","protocol":"dashscope_async_i2v","default":true}]
+    ai_video_models: str = ""
     # 音频生成
     ai_audio_endpoint: str = ""
     ai_audio_model: str = ""

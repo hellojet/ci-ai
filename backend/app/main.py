@@ -21,6 +21,7 @@ from app.routers import (
     environments,
     exports,
     generation,
+    image_models,
     projects,
     scenes,
     scripts,
@@ -28,6 +29,7 @@ from app.routers import (
     shots,
     styles,
     uploads,
+    video_models,
     ws,
 )
 
@@ -65,7 +67,14 @@ async def _ensure_sqlite_columns(conn) -> None:
         for column in table.columns:
             if column.name in existing_cols:
                 continue
-            col_type = column.type.compile(dialect=conn.dialect)
+            # SQLite 对 JSON 列没有原生类型，SQLAlchemy 会编译成 "JSON"
+            # SQLite 实际按 TEXT 存储，这里显式退化一下，避免 DDL 语法报错
+            try:
+                col_type = column.type.compile(dialect=conn.dialect)
+            except Exception:
+                col_type = "TEXT"
+            if col_type.upper() == "JSON":
+                col_type = "TEXT"
             nullable = "NULL" if column.nullable else "NOT NULL"
             default_clause = ""
             # 优先用 server_default（DDL 级，字符串字面量）
@@ -245,6 +254,8 @@ app.include_router(characters.router, prefix=API_V1_PREFIX)
 app.include_router(environments.router, prefix=API_V1_PREFIX)
 app.include_router(styles.router, prefix=API_V1_PREFIX)
 app.include_router(generation.router, prefix=API_V1_PREFIX)
+app.include_router(image_models.router, prefix=API_V1_PREFIX)
+app.include_router(video_models.router, prefix=API_V1_PREFIX)
 app.include_router(settings.router, prefix=API_V1_PREFIX)
 app.include_router(admin.router, prefix=API_V1_PREFIX)
 app.include_router(uploads.router, prefix=API_V1_PREFIX)

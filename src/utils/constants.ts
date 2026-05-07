@@ -35,7 +35,17 @@ export const VIEW_TYPES = [
   { value: 'action', label: '动作' },
 ] as const;
 
+// 场景图的视角/构图预设，用于给生成 prompt 增加空间差异化
+export const ENVIRONMENT_VIEW_TYPES = [
+  { value: 'wide', label: '全景' },
+  { value: 'close-up', label: '特写' },
+  { value: 'overhead', label: '俯视' },
+  { value: 'low_angle', label: '低角度' },
+  { value: 'aerial', label: '航拍' },
+] as const;
+
 export const MAX_CHARACTER_VIEWS = 20;
+export const MAX_ENVIRONMENT_IMAGES = 20;
 export const DEFAULT_SHOTS_PER_IMAGE = 2;
 export const IMAGE_CREDITS_COST = 2;
 export const VIDEO_CREDITS_COST = 10;

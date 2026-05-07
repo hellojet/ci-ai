@@ -99,6 +99,7 @@ async def generate_views(
     count: int,
     view_types: list[str],
     use_seed_image: bool = False,
+    model_id: Optional[str] = None,
 ) -> list[CharacterView]:
     """异步化：只落占位 view(status=queued) + 派发 Celery 任务，立即返回。
 
@@ -106,6 +107,7 @@ async def generate_views(
     - 每张视图在数据库里先落一条 status=queued 的占位行（image_url 为空串占位）
     - use_seed_image=True 时，会在占位 view 上打标，worker 里会把角色 seed_image_url
       作为参考图传给图生图 API；种子图缺失时 worker 会自动降级为纯文生图
+    - model_id 指定本次要用的图像模型（AI_IMAGE_MODELS 里的某一项 id），不传则走默认模型
     - 把这些 view_id 交给 Celery worker 逐个调用图像 API 回填，状态按 queued → generating → completed/failed 流转
     - 返回刚创建的占位 view 列表，供前端立即渲染 loading 卡片
     """
@@ -121,14 +123,9 @@ async def generate_views(
             ),
         )
 
-    # 校验 API 配置，避免派发后 worker 才报错
-    endpoint = await get_setting_value(db, "api.image.endpoint")
-    api_key = await get_setting_value(db, "api.image.api_key")
-    if not endpoint or not api_key:
-        raise HTTPException(
-            status_code=status.HTTP_501_NOT_IMPLEMENTED,
-            detail="图像生成 API 未配置，请在系统设置或 .env 中配置 endpoint 和 api_key。",
-        )
+    # 解析本次要用的图像模型：优先走 AI_IMAGE_MODELS 清单，回落到 .env 默认
+    # 任一方式不可用都直接 501，避免占位行落库后 worker 才报错
+    resolved_model_key = _resolve_image_model_key(db, model_id)
 
     # use_seed_image=True 但种子图不存在时，记录一下但不拒绝请求（worker 里会降级并在 error_message 留痕）
     effective_use_seed = bool(use_seed_image and character.seed_image_url)
@@ -155,6 +152,7 @@ async def generate_views(
             sort_order=current_max_order + 1 + idx,
             status="queued",
             use_seed_image=effective_use_seed,
+            model_key=resolved_model_key,
         )
         db.add(view)
         placeholders.append(view)
@@ -176,6 +174,31 @@ async def generate_views(
     await db.commit()
 
     return placeholders
+
+
+def _resolve_image_model_key(db: AsyncSession, model_id: Optional[str]) -> Optional[str]:
+    """解析并校验图像模型 id。
+
+    - 传了 model_id：必须在 AI_IMAGE_MODELS 清单里找到，否则 400
+    - 没传 model_id：优先用默认模型（AI_IMAGE_MODELS 中 default=true 的那条）
+    - 清单完全为空时返回 None，worker 会回落到 .env 的 AI_IMAGE_* 配置（仅支持 images_generations 协议）
+    """
+    from app.services import image_models_service
+
+    if model_id:
+        # strict=True：找不到就直接报错，避免把用户的显式选择偷偷回退成默认模型
+        model = image_models_service.get_model_by_id(model_id, strict=True)
+        if model is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"未知的图像模型：{model_id}，请先在 AI_IMAGE_MODELS 环境变量中配置。",
+            )
+        return model["id"]
+
+    default_model = image_models_service.get_default_model()
+    if default_model is not None:
+        return default_model["id"]
+    return None
 
 
 async def upload_view(

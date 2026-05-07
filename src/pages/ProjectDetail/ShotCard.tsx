@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
-import { Card, Typography, Space, Button, Tooltip, Popconfirm, message } from 'antd';
+import { useEffect, useMemo, useState } from 'react';
+import { Card, Typography, Space, Button, Tooltip, Popconfirm, Dropdown, message } from 'antd';
+import type { MenuProps } from 'antd';
 import {
   PictureOutlined,
   VideoCameraOutlined,
@@ -9,6 +10,7 @@ import {
   CheckCircleOutlined,
   LoadingOutlined,
   DragOutlined,
+  DownOutlined,
 } from '@ant-design/icons';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -17,6 +19,8 @@ import type { GenerationTask } from '@/types/generation';
 import StatusBadge from '@/components/StatusBadge';
 import { useProjectStore } from '@/stores/projectStore';
 import { useGenerationStore } from '@/stores/generationStore';
+import { getModelDisplayName } from '@/types/imageModel';
+// 视频模型对象结构与图像模型一致，可以直接复用 getModelDisplayName helper（结构兼容）。
 import { CAMERA_ANGLES } from '@/utils/constants';
 import { useLocale } from '@/hooks/useLocale';
 
@@ -38,11 +42,13 @@ const EMPTY_TASKS: GenerationTask[] = [];
 
 export default function ShotCard({ shot, projectId, onClick }: ShotCardProps) {
   const { deleteShot } = useProjectStore();
-  const { generateForShot, fetchShotTasks, pollShotTasks } = useGenerationStore();
+  const { generateForShot, fetchShotTasks, pollShotTasks, fetchImageModels, fetchVideoModels } = useGenerationStore();
   // 注意：selector 不能每次返回新数组（?? []），会触发 zustand 的无限循环警告。
   // 这里返回原引用（可能为 undefined），下面再做空数组兜底。
   const shotTasksRaw = useGenerationStore((state) => state.tasks[shot.id]);
   const shotTasks = shotTasksRaw ?? EMPTY_TASKS;
+  const imageModels = useGenerationStore((state) => state.imageModels);
+  const videoModels = useGenerationStore((state) => state.videoModels);
   const { t } = useLocale();
 
   // 提交瞬间的本地 loading（API 返回前），拿到 task 后就切换到 task.status 驱动
@@ -90,6 +96,13 @@ export default function ShotCard({ shot, projectId, onClick }: ShotCardProps) {
     fetchShotTasks(projectId, shot.id).catch(() => {
       /* silent */
     });
+    // 顺便拉一下图像/视频模型清单（store 自带缓存，多次调用只走一次网络）
+    fetchImageModels().catch(() => {
+      /* silent */
+    });
+    fetchVideoModels().catch(() => {
+      /* silent */
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, shot.id]);
 
@@ -107,12 +120,16 @@ export default function ShotCard({ shot, projectId, onClick }: ShotCardProps) {
   const runningTaskType: GenTaskType | null =
     (activeTask?.task_type as GenTaskType | undefined) ?? submittingType;
 
-  const handleGenerate = async (taskType: GenTaskType, event: React.MouseEvent) => {
-    event.stopPropagation();
+  const handleGenerate = async (
+    taskType: GenTaskType,
+    event: React.MouseEvent | null,
+    modelId?: string,
+  ) => {
+    event?.stopPropagation();
     if (isGenerating) return; // 防重复点击
     setSubmittingType(taskType);
     try {
-      await generateForShot(projectId, shot.id, taskType);
+      await generateForShot(projectId, shot.id, taskType, modelId);
       message.success(t('shotCard.generationStarted'));
       // generateForShot 内部已经启动 pollShotTasks，这里不再重复
     } catch (error) {
@@ -121,6 +138,77 @@ export default function ShotCard({ shot, projectId, onClick }: ShotCardProps) {
       setSubmittingType(null);
     }
   };
+
+  // 图像模型下拉菜单：把每个模型做成一个菜单项，点击后按该模型发起生成
+  const imageModelMenu: MenuProps = useMemo(
+    () => ({
+      items:
+        imageModels.length === 0
+          ? [
+              {
+                key: 'empty',
+                label: t('shotCard.noImageModels'),
+                disabled: true,
+              },
+            ]
+          : imageModels.map((model) => ({
+              key: model.id,
+              label: (
+                <span>
+                  {getModelDisplayName(model)}
+                  {model.is_default && (
+                    <Text style={{ marginLeft: 6, fontSize: 11, color: '#a855f7' }}>
+                      · {t('settings.defaultModelTag')}
+                    </Text>
+                  )}
+                </span>
+              ),
+            })),
+      onClick: ({ key, domEvent }) => {
+        domEvent.stopPropagation();
+        if (key === 'empty') return;
+        void handleGenerate('image', null, key);
+      },
+    }),
+    // handleGenerate 是稳定的闭包，t 也稳定，所以依赖只看 imageModels
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [imageModels],
+  );
+
+  // 视频模型下拉菜单：与图像菜单同构，点击对应模型即按该模型发起视频生成
+  const videoModelMenu: MenuProps = useMemo(
+    () => ({
+      items:
+        videoModels.length === 0
+          ? [
+              {
+                key: 'empty',
+                label: t('shotCard.noVideoModels'),
+                disabled: true,
+              },
+            ]
+          : videoModels.map((model) => ({
+              key: model.id,
+              label: (
+                <span>
+                  {getModelDisplayName(model)}
+                  {model.is_default && (
+                    <Text style={{ marginLeft: 6, fontSize: 11, color: '#a855f7' }}>
+                      · {t('settings.defaultModelTag')}
+                    </Text>
+                  )}
+                </span>
+              ),
+            })),
+      onClick: ({ key, domEvent }) => {
+        domEvent.stopPropagation();
+        if (key === 'empty') return;
+        void handleGenerate('video', null, key);
+      },
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [videoModels],
+  );
 
   const handleDelete = async (event?: React.MouseEvent) => {
     event?.stopPropagation();
@@ -307,27 +395,56 @@ export default function ShotCard({ shot, projectId, onClick }: ShotCardProps) {
 
           {/* Actions */}
           <Space size={4} style={{ justifyContent: 'flex-end', width: '100%' }}>
-            <Tooltip title="生成图片">
-              <Button
-                type="text"
+            {/* 生成图片：主按钮 = 默认模型一键生成；右侧箭头点开下拉显式选模型。
+                注意：之前用 <Dropdown> 包 <Button>，主按钮 onClick 只 stopPropagation，
+                导致用户点了主按钮以为发起了生成、实际只是触发下拉，是个隐蔽 bug。
+                改用 antd Dropdown.Button：主按钮走 onClick，菜单走 menu.onClick。 */}
+            <Tooltip title={t('shotCard.selectImageModel')}>
+              <Dropdown.Button
                 size="small"
-                icon={<PictureOutlined />}
+                trigger={['click']}
+                placement="bottomRight"
+                menu={imageModelMenu}
                 loading={runningTaskType === 'image'}
                 disabled={isGenerating && runningTaskType !== 'image'}
-                onClick={(event) => handleGenerate('image', event)}
-                style={{ color: '#888' }}
-              />
+                buttonsRender={([leftBtn, rightBtn]) => [
+                  // 阻止冒泡，避免点击按钮时触发 Card 的 onClick
+                  <span key="l" onClick={(e) => e.stopPropagation()}>{leftBtn}</span>,
+                  <span key="r" onClick={(e) => e.stopPropagation()}>{rightBtn}</span>,
+                ]}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  // 不传 modelId → 后端用默认模型
+                  void handleGenerate('image', null);
+                }}
+              >
+                <PictureOutlined />
+              </Dropdown.Button>
             </Tooltip>
-            <Tooltip title={shot.locked_image_id ? '生成视频' : '请先锁定一张图片'}>
-              <Button
-                type="text"
+            {/* 生成视频：与图片按钮同构，主按钮 = 默认视频模型一键生成 */}
+            <Tooltip
+              title={shot.locked_image_id ? t('shotCard.selectVideoModel') : '请先锁定一张图片'}
+            >
+              <Dropdown.Button
                 size="small"
-                icon={<VideoCameraOutlined />}
+                trigger={['click']}
+                placement="bottomRight"
+                menu={videoModelMenu}
                 loading={runningTaskType === 'video'}
-                onClick={(event) => handleGenerate('video', event)}
-                disabled={!shot.locked_image_id || (isGenerating && runningTaskType !== 'video')}
-                style={{ color: shot.locked_image_id ? '#888' : '#444' }}
-              />
+                disabled={
+                  !shot.locked_image_id || (isGenerating && runningTaskType !== 'video')
+                }
+                buttonsRender={([leftBtn, rightBtn]) => [
+                  <span key="l" onClick={(e) => e.stopPropagation()}>{leftBtn}</span>,
+                  <span key="r" onClick={(e) => e.stopPropagation()}>{rightBtn}</span>,
+                ]}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void handleGenerate('video', null);
+                }}
+              >
+                <VideoCameraOutlined />
+              </Dropdown.Button>
             </Tooltip>
             <Popconfirm
               title="确定删除此镜头？"

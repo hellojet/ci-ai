@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Integer, String, Text, DateTime, ForeignKey, func
+from sqlalchemy import JSON, Integer, String, Text, DateTime, ForeignKey, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -48,6 +48,26 @@ class Shot(Base):
         ForeignKey("character_views.id"),
         nullable=True,
     )
+    # 一个分镜可能有多个角色，每个角色各锁一张 view 作为参考图。
+    # 存 character_view id 列表，按在列表中的顺序作为参考图传递顺序。
+    # 旧字段 ref_character_view_id 仅用于向下兼容：未迁移的旧数据读这个单值。
+    ref_character_view_ids: Mapped[list[int] | None] = mapped_column(
+        JSON,
+        nullable=True,
+        default=None,
+    )
+    # 提示词模块开关：dict[str, bool]，键为 style/environment/characters/action/dialogue/camera。
+    # 为 None 时视为"全部启用"（兼容旧分镜，无需迁移数据）。
+    prompt_modules_image: Mapped[dict | None] = mapped_column(
+        JSON, nullable=True, default=None,
+    )
+    prompt_modules_video: Mapped[dict | None] = mapped_column(
+        JSON, nullable=True, default=None,
+    )
+    # 自定义提示词：用户在前端整段编辑后保存，非空时覆盖开关拼接结果。
+    # 用户点"刷新"按钮即清空此字段，回到按 modules 开关自动拼接的模式。
+    custom_prompt_image: Mapped[str | None] = mapped_column(Text, nullable=True)
+    custom_prompt_video: Mapped[str | None] = mapped_column(Text, nullable=True)
     video_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     audio_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

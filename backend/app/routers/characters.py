@@ -137,6 +137,7 @@ async def generate_views(
         body.count,
         body.view_types,
         use_seed_image=body.use_seed_image,
+        model_id=body.model_id,
     )
     return ApiResponse(
         data=[CharacterViewOut.model_validate(v) for v in views],

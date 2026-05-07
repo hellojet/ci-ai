@@ -158,6 +158,11 @@ const zh = {
     running_image: '生成图片中…',
     running_video: '生成视频中…',
     running_audio: '生成音频中…',
+    selectImageModel: '选择图片模型',
+    noImageModels: '后端未配置图片模型，请联系管理员在环境变量 AI_IMAGE_MODELS 中添加',
+    selectVideoModel: '选择视频模型',
+    noVideoModels: '后端未配置视频模型，请联系管理员在环境变量 AI_VIDEO_MODELS 中添加',
+    generateWithModel: '使用 {model} 生成',
   },
 
   // 任务 / 分镜状态徽章
@@ -278,6 +283,22 @@ const zh = {
     generationPromptPlaceholder: '输入图片生成提示词...',
     aiGenerate: 'AI 生成',
     notConfigured: '未配置',
+    // 场景资产：参考图 / 视图管理 / 模型下拉
+    generateEnvironmentImages: '生成场景图片',
+    environmentImages: '场景图片',
+    uploadImage: '上传图片',
+    uploadImageSuccess: '图片上传成功',
+    uploadImageFailed: '图片上传失败',
+    deleteImageConfirm: '确认删除该图片？',
+    deleteImageSuccess: '图片已删除',
+    deleteImageFailed: '删除图片失败',
+    seedImage: '种子图片',
+    environmentSeedImageTip: '开启后，将把场景的种子图片作为参考传给生图模型，生成的图片会更贴合种子图的空间与氛围。参考图生成约需 2-3 分钟，请耐心等待。',
+    environmentSeedMissingTip: '当前场景还未设置种子图片，请先在左侧上传',
+    environmentViewTypes: '视角/构图',
+    imageModel: '图像模型',
+    imageModelPlaceholder: '选择要使用的图像模型',
+    noImageModels: '暂无可用图像模型，请在后端 AI_IMAGE_MODELS 中配置',
   },
 
   // 设置
@@ -300,6 +321,11 @@ const zh = {
     timeout: '超时时间(秒)',
     currentConcurrency: '当前并发数',
     adminOnly: '仅管理员可修改 API 配置，如需修改请联系管理员。',
+    // 图像模型清单现在由后端环境变量 AI_IMAGE_MODELS 统一维护
+    imageModelsManagedByEnv: '图片模型清单由后端环境变量 AI_IMAGE_MODELS 统一配置，前端在生成画面里下拉选择。',
+    availableImageModels: '当前可用模型',
+    imageModelsEmpty: '暂无可用模型，请联系运维在 .env 的 AI_IMAGE_MODELS 中配置',
+    defaultModelTag: '默认',
   },
 
   // 管理员

@@ -7,6 +7,8 @@ import { useLocale } from '@/hooks/useLocale';
 import FileUpload from '@/components/FileUpload';
 import type { Character } from '@/types/character';
 import { VIEW_TYPES, MAX_CHARACTER_VIEWS } from '@/utils/constants';
+import { useGenerationStore } from '@/stores/generationStore';
+import { getModelDisplayName } from '@/types/imageModel';
 
 const { Title, Text } = Typography;
 const { TextArea } = Input;
@@ -33,6 +35,10 @@ export default function CharacterDetailPage() {
   const [generating, setGenerating] = useState(false);
   // 生成时是否参考种子图；打开弹窗时根据 seed 是否存在初始化
   const [generateUseSeed, setGenerateUseSeed] = useState(false);
+  // 选中的图像模型 id；undefined 表示走默认模型
+  const [generateModelId, setGenerateModelId] = useState<string | undefined>(undefined);
+  const fetchImageModels = useGenerationStore((state) => state.fetchImageModels);
+  const imageModels = useGenerationStore((state) => state.imageModels);
   // 用 ref 维护轮询定时器，避免多次启动重复轮询
   const pollTimerRef = useRef<number | null>(null);
 
@@ -73,6 +79,10 @@ export default function CharacterDetailPage() {
 
   useEffect(() => {
     fetchCharacter();
+    // 预取图像模型清单，打开生成弹窗时不用再等网络
+    fetchImageModels().catch(() => {
+      /* silent */
+    });
     return () => stopPolling();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [characterId]);
@@ -122,6 +132,7 @@ export default function CharacterDetailPage() {
     const submitViewTypes = generateViewTypes.length > 0 ? generateViewTypes : ['front'];
     const submitCount = generateCount;
     const submitUseSeed = generateUseSeed && !!character?.seed_image_url;
+    const submitModelId = generateModelId;
 
     try {
       // 后端立即返回占位 view(status=queued)，把它们合入本地 state
@@ -129,6 +140,7 @@ export default function CharacterDetailPage() {
         count: submitCount,
         view_types: submitViewTypes,
         use_seed_image: submitUseSeed,
+        model_id: submitModelId,
       });
       setCharacter((prev) => (prev ? { ...prev, views: [...(prev.views || []), ...placeholders] } : prev));
       message.success(t('assets.viewGenerationStarted'));
@@ -147,6 +159,9 @@ export default function CharacterDetailPage() {
   const openGenerateModal = () => {
     // 每次打开弹窗时，根据当前角色是否有种子图重新决定默认值
     setGenerateUseSeed(!!character?.seed_image_url);
+    // 默认选中清单里标记为默认的模型；找不到则 undefined（后端走默认）
+    const defaultModel = imageModels.find((m) => m.is_default) || imageModels[0];
+    setGenerateModelId(defaultModel?.id);
     setGenerateModalOpen(true);
   };
 
@@ -396,6 +411,23 @@ export default function CharacterDetailPage() {
           <div style={{ marginBottom: 12 }}>
             <Text type="secondary" style={{ display: 'block', marginBottom: 4 }}>{t('assets.viewTypes')}</Text>
             <Select mode="multiple" value={generateViewTypes} onChange={setGenerateViewTypes} style={{ width: '100%' }} options={VIEW_TYPES.map((vt) => ({ value: vt.value, label: vt.label }))} />
+          </div>
+          <div style={{ marginBottom: 12 }}>
+            <Text type="secondary" style={{ display: 'block', marginBottom: 4 }}>{t('assets.imageModel')}</Text>
+            <Select
+              value={generateModelId}
+              onChange={setGenerateModelId}
+              style={{ width: '100%' }}
+              placeholder={t('assets.imageModelPlaceholder')}
+              notFoundContent={<Text type="secondary">{t('assets.noImageModels')}</Text>}
+              options={imageModels.map((m) => ({
+                value: m.id,
+                label: m.is_default
+                  ? `${getModelDisplayName(m)} · ${t('settings.defaultModelTag')}`
+                  : getModelDisplayName(m),
+              }))}
+              disabled={imageModels.length === 0}
+            />
           </div>
           {/* 参考种子图片 Switch：种子图缺失时禁用并提示 */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12 }}>

@@ -39,4 +39,6 @@ export interface GenerateViewsRequest {
   view_types: string[];
   /** 是否参考角色的种子图（默认 false） */
   use_seed_image?: boolean;
+  /** 图像模型 id（AI_IMAGE_MODELS 中某一项 id）；不传走默认模型 */
+  model_id?: string;
 }

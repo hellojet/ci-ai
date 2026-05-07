@@ -1,6 +1,7 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router';
-import { Spin, Button, Space, message, Typography } from 'antd';
+import { Spin, Button, Space, Dropdown, message, Typography } from 'antd';
+import type { MenuProps } from 'antd';
 import {
   ArrowLeftOutlined,
   DownloadOutlined,
@@ -8,10 +9,12 @@ import {
   PictureOutlined,
   VideoCameraOutlined,
   EditOutlined,
+  DownOutlined,
 } from '@ant-design/icons';
 import { useLocale } from '@/hooks/useLocale';
 import { useProjectStore } from '@/stores/projectStore';
 import { useGenerationStore } from '@/stores/generationStore';
+import { getModelDisplayName } from '@/types/imageModel';
 import { exportProjectJson, exportProjectZip } from '@/api/export';
 import ScriptPanel from './ScriptPanel';
 import Canvas from './Canvas';
@@ -27,9 +30,14 @@ export default function ProjectDetailPage() {
   const navigate = useNavigate();
   const projectId = Number(id);
   const { currentProject, loading, fetchProject, clearProject } = useProjectStore();
-  const { generateAll } = useGenerationStore();
+  const { generateAll, fetchImageModels, fetchVideoModels } = useGenerationStore();
+  const imageModels = useGenerationStore((state) => state.imageModels);
+  const videoModels = useGenerationStore((state) => state.videoModels);
   const { t } = useLocale();
-  const [selectedShot, setSelectedShot] = useState<Shot | null>(null);
+  // 只存 shot.id，真正的 shot 对象每次渲染从 currentProject 派生（见下方 selectedShot useMemo）。
+  // 这样视频/图片生成完成后 fetchProject 刷新 currentProject，ShotEditor 收到的 shot 会自动带上最新 videos/images，
+  // 不需要用户手动刷新浏览器。
+  const [selectedShotId, setSelectedShotId] = useState<number | null>(null);
   const [selectedScene, setSelectedScene] = useState<Scene | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   // 剧本面板默认隐藏，需要时点击按钮展开
@@ -40,21 +48,42 @@ export default function ProjectDetailPage() {
     if (projectId) {
       fetchProject(projectId);
     }
+    // 预取图像/视频模型清单：批量生成按钮展开下拉时无需再等网络
+    fetchImageModels().catch(() => {
+      /* silent */
+    });
+    fetchVideoModels().catch(() => {
+      /* silent */
+    });
     return () => {
       clearProject();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
 
   const handleShotClick = useCallback((shot: Shot) => {
-    setSelectedShot(shot);
+    setSelectedShotId(shot.id);
     setEditorOpen(true);
   }, []);
+
+  // 从 currentProject 派生最新的 selectedShot，确保任何 store 更新（生成完成、保存、锁定）都即时反映到编辑器
+  const selectedShot = useMemo<Shot | null>(() => {
+    if (selectedShotId == null || !currentProject) return null;
+    for (const scene of currentProject.scenes) {
+      const found = scene.shots.find((s) => s.id === selectedShotId);
+      if (found) return found;
+    }
+    return null;
+  }, [selectedShotId, currentProject]);
 
   const handleSceneClick = useCallback((scene: Scene) => {
     setSelectedScene(scene);
   }, []);
 
-  const handleBatchGenerate = async (taskType: 'image' | 'video') => {
+  const handleBatchGenerate = async (
+    taskType: 'image' | 'video',
+    modelId?: string,
+  ) => {
     if (!currentProject) return;
 
     if (taskType === 'video') {
@@ -68,12 +97,81 @@ export default function ProjectDetailPage() {
     }
 
     try {
-      await generateAll(projectId, taskType);
+      await generateAll(projectId, taskType, modelId);
       message.success(t('projectDetail.batchStarted', { type: taskType }));
     } catch (error) {
       message.error((error as Error).message || t('projectDetail.batchFailed'));
     }
   };
+
+  // 批量生成图片时的模型下拉菜单
+  const batchImageModelMenu: MenuProps = useMemo(
+    () => ({
+      items:
+        imageModels.length === 0
+          ? [
+              {
+                key: 'empty',
+                label: t('shotCard.noImageModels'),
+                disabled: true,
+              },
+            ]
+          : imageModels.map((model) => ({
+              key: model.id,
+              label: (
+                <span>
+                  {getModelDisplayName(model)}
+                  {model.is_default && (
+                    <Text style={{ marginLeft: 6, fontSize: 11, color: '#a855f7' }}>
+                      · {t('settings.defaultModelTag')}
+                    </Text>
+                  )}
+                </span>
+              ),
+            })),
+      onClick: ({ key }) => {
+        if (key === 'empty') return;
+        void handleBatchGenerate('image', key);
+      },
+    }),
+    // handleBatchGenerate 闭包引用 currentProject/projectId/generateAll，但它们在重渲染时稳定
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [imageModels, t],
+  );
+
+  // 批量生成视频时的模型下拉菜单（与图片菜单同构）
+  const batchVideoModelMenu: MenuProps = useMemo(
+    () => ({
+      items:
+        videoModels.length === 0
+          ? [
+              {
+                key: 'empty',
+                label: t('shotCard.noVideoModels'),
+                disabled: true,
+              },
+            ]
+          : videoModels.map((model) => ({
+              key: model.id,
+              label: (
+                <span>
+                  {getModelDisplayName(model)}
+                  {model.is_default && (
+                    <Text style={{ marginLeft: 6, fontSize: 11, color: '#a855f7' }}>
+                      · {t('settings.defaultModelTag')}
+                    </Text>
+                  )}
+                </span>
+              ),
+            })),
+      onClick: ({ key }) => {
+        if (key === 'empty') return;
+        void handleBatchGenerate('video', key);
+      },
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [videoModels, t],
+  );
 
   const triggerBrowserDownload = (blob: Blob, filename: string) => {
     const url = URL.createObjectURL(blob);
@@ -224,19 +322,23 @@ export default function ProjectDetailPage() {
         }}
       >
         <Space>
-          <Button
+          {/* 批量生成图片：主按钮走默认模型；右侧箭头展开模型下拉 */}
+          <Dropdown.Button
             type="primary"
-            icon={<PictureOutlined />}
+            icon={<DownOutlined />}
+            menu={batchImageModelMenu}
             onClick={() => handleBatchGenerate('image')}
           >
-            {t('projectDetail.generateAllImages')}
-          </Button>
-          <Button
-            icon={<VideoCameraOutlined />}
+            <PictureOutlined /> {t('projectDetail.generateAllImages')}
+          </Dropdown.Button>
+          {/* 批量生成视频：与图片同构，主按钮走默认模型，右侧箭头展开模型下拉 */}
+          <Dropdown.Button
+            icon={<DownOutlined />}
+            menu={batchVideoModelMenu}
             onClick={() => handleBatchGenerate('video')}
           >
-            {t('projectDetail.generateAllVideos')}
-          </Button>
+            <VideoCameraOutlined /> {t('projectDetail.generateAllVideos')}
+          </Dropdown.Button>
         </Space>
         <Space>
           <ThunderboltOutlined style={{ color: '#faad14' }} />
@@ -259,7 +361,7 @@ export default function ProjectDetailPage() {
         open={editorOpen}
         onClose={() => {
           setEditorOpen(false);
-          setSelectedShot(null);
+          setSelectedShotId(null);
         }}
       />
     </div>

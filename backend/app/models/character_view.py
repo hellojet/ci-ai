@@ -31,6 +31,8 @@ class CharacterView(Base):
     use_seed_image: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="0"
     )
+    # 本次生成使用的图像模型 id（指向 AI_IMAGE_MODELS 里的某一项），占位阶段写入
+    model_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
     created_at: Mapped[str] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

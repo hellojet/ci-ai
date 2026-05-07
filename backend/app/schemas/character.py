@@ -40,3 +40,5 @@ class GenerateViewsRequest(BaseModel):
     view_types: list[str]
     # 是否参考角色种子图；默认 False，向后兼容老前端
     use_seed_image: bool = False
+    # 图像模型 id（对应 AI_IMAGE_MODELS 中某一项 id）；不传走默认模型
+    model_id: Optional[str] = None

@@ -1,21 +1,25 @@
-"""图片生成 AI 适配器：调用外部图片生成 API（gpt-image-2 协议）。
+"""图片生成 AI 适配器：调用外部图片生成 API。
 
-参考图契约（实测可用，2026-05-01 验证）：
-    {
-      "model": "gpt-image-2",
-      "prompt": "...",
-      "n": 1,
-      "size": "1536x1024",
-      "quality": "high",
-      "image": [
-        {"type": "input_image", "image_url": "http://.../xxx.jpg"}
-      ]
-    }
-- image_url 直接传公网 http(s) URL，上游网关会自行拉取，无需我们先 base64 编码
-- 响应格式：data[0] = {url: null, b64_json: "...", revised_prompt: "..."}，
-  当前所有响应都落在 b64_json（url 恒为 null），由 _parse_response 落盘成公网 URL
+支持两种协议（由上层按模型清单中的 protocol 字段选择调用哪一个）：
 
-落盘策略：
+1) images_generations（OpenAI /images/generations，默认，gpt-image-2 等）
+   - 入口：generate / generate_sync
+   - 契约（实测可用，2026-05-01 验证）：
+        {"model":"gpt-image-2","prompt":"...","n":1,"size":"1536x1024","quality":"high",
+         "image":[{"type":"input_image","image_url":"http://.../xxx.jpg"}]}
+   - 响应：data[0] = {url: null, b64_json: "...", revised_prompt: "..."}
+
+2) chat_completions_modalities（新：Gemini 系列图像模型）
+   - 入口：generate_sync_via_chat
+   - 契约（用户 2026-05-06 提供的 curl 示例）：
+        POST /api/fai/v1/chat/completions
+        {"model":"gemini-2.5-flash-image-preview",
+         "messages":[{"role":"user","content":"..."}],
+         "modalities":["TEXT","IMAGE"]}
+   - 响应形如标准 Chat Completions，图片以 base64 内嵌在 message.images[] 或
+     message.content 的 multimodal 分段里；本适配器会尝试多种常见位置。
+
+落盘策略（两种协议共用）：
 - 优先上传到七牛云（qiniu_storage），返回公网 CDN 绝对 URL，供下游视频生成等外部 AI 网关直接拉取
 - 七牛未配置或上传失败时，降级为写入本地 uploads/generated/ 目录，返回 /uploads/generated/xxx.png 相对路径
 """
@@ -80,7 +84,7 @@ def _is_rate_limited(status_code: int, body_text: str) -> bool:
 def _fetch_image_as_data_url(image_url: str, timeout: float = 30.0) -> str:
     """把参考图下载下来转成 data:image/...;base64,xxx 协议串。
 
-    ⚠️ 降级保留：当前上游（trip-llm 网关 / gpt-image-2）已支持直接透传 http url，
+    ⚠️ 降级保留：当前上游已支持直接透传 http url，
     因此 generate_sync / generate 默认都不会调用本函数。保留这里是为了将来切换
     到只接受 data URL 的端点时能即刻降级——改一行参数即可。
 
@@ -121,7 +125,7 @@ def _build_payload(
 
     当 reference_images 非空时，按上游契约加 image 字段：
         "image": [{"type": "input_image", "image_url": <http url 或 data URL>}, ...]
-    经实测，上游（trip-llm 网关）两种形式都能接受，我们优先传 http url 以减小请求体。
+    经实测，上游两种形式都能接受，我们优先传 http url 以减小请求体。
     """
     size_str = f"{width}x{height}"
     if size_str not in VALID_SIZES:
@@ -213,12 +217,13 @@ def generate_sync(
     height: int = 576,
     count: int = 1,
     reference_image_url: str | None = None,
+    reference_image_urls: list[str] | None = None,
 ) -> list[str]:
     """同步调用图片生成 API（供 Celery worker 使用）。
 
-    - reference_image_url 非空时，走"图生图"协议：直接把 http url 透传给上游，
-      按 {type: "input_image", image_url: "<http url>"} 加入 payload.image 数组；
-      上游网关自行拉取，无需我们先 base64 编码（可省一次下载 + 大幅缩小请求体）。
+    - reference_image_urls 优先于 reference_image_url；images_generations 协议
+      实测支持多图参考（payload.image 为数组），因此这里全部透传给上游。
+    - 单值参数 reference_image_url 仅作向下兼容。
     - 包含内部限流重试：识别 AI 网关包装式限流（HTTP 400/429 + body MPE-429/EngineOverloaded），
       按指数退避重试最多 MAX_RATE_LIMIT_RETRIES 次。
     """
@@ -227,16 +232,18 @@ def generate_sync(
         "Content-Type": "application/json",
     }
 
-    # 实测上游（trip-llm 网关）直接接受 http url，不需要我们先下载成 base64 data URL，
+    # 实测上游直接接受 http url，不需要我们先下载成 base64 data URL，
     # 这样：①请求体从 ~180KB 降到 <1KB，②网关侧省去 base64 解码开销，③避免我们多花一次下载。
     # 如果未来遇到只支持 base64 的端点，可以改用 _fetch_image_as_data_url() 降级。
-    reference_image_urls: list[str] = [reference_image_url] if reference_image_url else []
+    ref_urls: list[str] = [u for u in (reference_image_urls or []) if u]
+    if not ref_urls and reference_image_url:
+        ref_urls = [reference_image_url]
 
-    payload = _build_payload(prompt, negative_prompt, width, height, count, reference_image_urls)
+    payload = _build_payload(prompt, negative_prompt, width, height, count, ref_urls)
 
     logger.info(
         "Image API request: endpoint=%s, model=%s, size=%s, n=%d, ref_images=%d, prompt=%.80s...",
-        endpoint, payload["model"], payload["size"], count, len(reference_image_urls), prompt,
+        endpoint, payload["model"], payload["size"], count, len(ref_urls), prompt,
     )
 
     attempt = 0
@@ -309,10 +316,11 @@ async def generate(
     height: int = 576,
     count: int = 4,
     reference_image_url: str | None = None,
+    reference_image_urls: list[str] | None = None,
 ) -> list[str]:
     """异步调用图片生成 API（供 FastAPI 路由使用）。
 
-    - reference_image_url 非空时与 generate_sync 同契约，走图生图模式。
+    - reference_image_urls 优先于 reference_image_url；多图时全部透传给 payload.image 数组。
     - 与 generate_sync 对齐的限流重试契约：识别 AI 网关包装式限流
       （HTTP 400/429 + body MPE-429/EngineOverloaded），指数退避最多 MAX_RATE_LIMIT_RETRIES 次。
     """
@@ -322,9 +330,11 @@ async def generate(
     }
 
     # 同 generate_sync：直接透传 http url，避免 base64 开销。详见 generate_sync 里的说明。
-    reference_image_urls: list[str] = [reference_image_url] if reference_image_url else []
+    ref_urls: list[str] = [u for u in (reference_image_urls or []) if u]
+    if not ref_urls and reference_image_url:
+        ref_urls = [reference_image_url]
 
-    payload = _build_payload(prompt, negative_prompt, width, height, count, reference_image_urls)
+    payload = _build_payload(prompt, negative_prompt, width, height, count, ref_urls)
 
     attempt = 0
     while True:
@@ -379,3 +389,225 @@ async def generate(
             )
             await asyncio.sleep(delay)
             continue
+
+
+# ── Chat Completions + modalities 协议（Gemini 系列图像模型） ──────────────────
+
+def _extract_images_from_chat_response(data: dict) -> list[str]:
+    """从 Chat Completions 响应中提取图片，返回可访问的 URL 列表。
+
+    上游目前观察到的几种可能形态，都做兼容：
+      A) choices[0].message.images = [{"image_url":{"url":"data:image/png;base64,..."}}, ...]
+      B) choices[0].message.content = [
+             {"type":"text","text":"..."},
+             {"type":"image_url","image_url":{"url":"data:image/..."}},
+         ]
+      C) choices[0].message.content = "data:image/png;base64,xxx"（单字符串，少见）
+      D) 顶层 data=[{b64_json:"..."}]（保险起见兜一下）
+    """
+    results: list[str] = []
+
+    def _consume_url_like(value: str) -> None:
+        if not value:
+            return
+        if value.startswith("http://") or value.startswith("https://"):
+            results.append(value)
+        elif value.startswith("data:"):
+            # data:image/png;base64,xxxx
+            try:
+                b64 = value.split(",", 1)[1]
+            except IndexError:
+                return
+            results.append(_save_base64_image(b64))
+        else:
+            # 兜底当作 base64
+            try:
+                results.append(_save_base64_image(value))
+            except Exception:  # noqa: BLE001 - 仅用于宽容解析
+                pass
+
+    choices = data.get("choices") or []
+    if choices:
+        message = (choices[0] or {}).get("message") or {}
+
+        # A) message.images
+        images_field = message.get("images")
+        if isinstance(images_field, list):
+            for item in images_field:
+                if not isinstance(item, dict):
+                    continue
+                image_url = item.get("image_url")
+                if isinstance(image_url, dict):
+                    _consume_url_like(image_url.get("url", ""))
+                elif isinstance(image_url, str):
+                    _consume_url_like(image_url)
+                elif item.get("b64_json"):
+                    results.append(_save_base64_image(item["b64_json"]))
+
+        # B) message.content 是 multimodal 数组
+        content = message.get("content")
+        if isinstance(content, list):
+            for part in content:
+                if not isinstance(part, dict):
+                    continue
+                if part.get("type") in ("image_url", "output_image", "image"):
+                    image_url = part.get("image_url") or part.get("url")
+                    if isinstance(image_url, dict):
+                        _consume_url_like(image_url.get("url", ""))
+                    elif isinstance(image_url, str):
+                        _consume_url_like(image_url)
+                elif part.get("b64_json"):
+                    results.append(_save_base64_image(part["b64_json"]))
+
+        # C) content 是单一字符串且看上去是 data/http url
+        if isinstance(content, str) and (content.startswith("data:") or content.startswith("http")):
+            _consume_url_like(content)
+
+    # D) 顶层 data 兜底
+    if not results and isinstance(data.get("data"), list):
+        for item in data["data"]:
+            if isinstance(item, dict):
+                if item.get("url"):
+                    _consume_url_like(item["url"])
+                elif item.get("b64_json"):
+                    results.append(_save_base64_image(item["b64_json"]))
+
+    return results
+
+
+def _build_chat_messages(
+    prompt: str,
+    reference_image_url: str | None = None,
+    reference_image_urls: list[str] | None = None,
+) -> list[dict]:
+    """构造 Chat Completions 的 messages。
+
+    - 多图 (reference_image_urls 非空) 时：content 按 [text, image_url, image_url, ...] 排布
+    - 单图 (仅传 reference_image_url) 时：content 为 [text, image_url]
+    - 无参考图时：content 为纯字符串 prompt（走文生图）
+    """
+    urls: list[str] = [u for u in (reference_image_urls or []) if u]
+    if not urls and reference_image_url:
+        urls = [reference_image_url]
+
+    if not urls:
+        return [{"role": "user", "content": prompt}]
+
+    content: list[dict] = [{"type": "text", "text": prompt}]
+    for url in urls:
+        content.append({"type": "image_url", "image_url": {"url": url}})
+    return [{"role": "user", "content": content}]
+
+
+def generate_sync_via_chat(
+    endpoint: str,
+    api_key: str,
+    model: str,
+    prompt: str,
+    count: int = 1,
+    reference_image_url: str | None = None,
+    reference_image_urls: list[str] | None = None,
+) -> list[str]:
+    """走 Chat Completions + modalities=["TEXT","IMAGE"] 协议生成图片（Gemini 系列）。
+
+    - reference_image_urls 支持多图参考（该协议原生支持 multimodal content 数组）
+    - reference_image_url 仅用于向下兼容
+    - count 参数当前协议不原生支持批量，故采用"多次单图"循环实现
+    """
+    if not model:
+        raise HTTPException(status_code=400, detail="image model is required for chat_completions_modalities protocol")
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json;charset=UTF-8",
+    }
+    ref_urls: list[str] = [u for u in (reference_image_urls or []) if u]
+    if not ref_urls and reference_image_url:
+        ref_urls = [reference_image_url]
+    logger.info(
+        "Chat-image API request: endpoint=%s, model=%s, n=%d, ref_images=%d, prompt=%.80s...",
+        endpoint, model, count, len(ref_urls), prompt,
+    )
+    payload_base = {
+        "model": model,
+        "messages": _build_chat_messages(prompt, reference_image_urls=ref_urls),
+        "modalities": ["TEXT", "IMAGE"],
+    }
+
+    all_urls: list[str] = []
+    for call_idx in range(max(1, count)):
+        attempt = 0
+        while True:
+            try:
+                with httpx.Client(timeout=REQUEST_TIMEOUT) as client:
+                    response = client.post(endpoint, json=payload_base, headers=headers)
+
+                    if _is_rate_limited(response.status_code, response.text):
+                        attempt += 1
+                        if attempt > MAX_RATE_LIMIT_RETRIES:
+                            logger.error(
+                                "Chat-image API rate limited after %d retries, giving up. body=%.200s",
+                                MAX_RATE_LIMIT_RETRIES, response.text,
+                            )
+                            raise HTTPException(
+                                status_code=429,
+                                detail=f"Image API rate limited after {MAX_RATE_LIMIT_RETRIES} retries",
+                            )
+                        delay = _compute_retry_delay(attempt)
+                        logger.warning(
+                            "Chat-image API 限流（第 %d/%d 次），%d 秒后重试... body=%.120s",
+                            attempt, MAX_RATE_LIMIT_RETRIES, delay, response.text,
+                        )
+                        time.sleep(delay)
+                        continue
+
+                    response.raise_for_status()
+                    data = response.json()
+                    logger.info(
+                        "Chat-image API response (call %d/%d) keys=%s",
+                        call_idx + 1, count, list(data.keys()),
+                    )
+                    urls = _extract_images_from_chat_response(data)
+                    if not urls:
+                        # 上游没返回图片时，把 body 截断写到日志里帮助排查
+                        logger.error(
+                            "Chat-image API returned no images. model=%s body=%.500s",
+                            model, response.text,
+                        )
+                        raise HTTPException(
+                            status_code=502,
+                            detail="Image API returned no image (empty choices[0].message.images)",
+                        )
+                    all_urls.extend(urls)
+                    break
+            except HTTPException:
+                raise
+            except httpx.HTTPStatusError as exc:
+                logger.error(
+                    "Chat-image API returned %s: %s",
+                    exc.response.status_code, exc.response.text,
+                )
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Image API error: {exc.response.status_code}",
+                )
+            except httpx.RequestError as exc:
+                attempt += 1
+                if attempt > MAX_RATE_LIMIT_RETRIES:
+                    logger.error(
+                        "Chat-image API 网络错误超过 %d 次重试仍失败，放弃。错误类型=%s err=%s",
+                        MAX_RATE_LIMIT_RETRIES, type(exc).__name__, exc,
+                    )
+                    raise HTTPException(
+                        status_code=502,
+                        detail=f"Image API unreachable ({type(exc).__name__}): {exc}",
+                    )
+                delay = _compute_retry_delay(attempt)
+                logger.warning(
+                    "Chat-image API 网络错误（第 %d/%d 次，非限流），%d 秒后重试... 错误类型=%s err=%s",
+                    attempt, MAX_RATE_LIMIT_RETRIES, delay, type(exc).__name__, exc,
+                )
+                time.sleep(delay)
+                continue
+
+    return all_urls

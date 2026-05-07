@@ -20,6 +20,8 @@ class Environment(Base):
     # 保留 base_image_url 作为历史字段兼容，但实际场景图片集中存储在 EnvironmentImage 里
     base_image_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 种子图：和角色的 seed_image_url 语义一致，生成参考图时可作为 reference 传给模型
+    seed_image_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     creator_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("users.id"), nullable=False
     )

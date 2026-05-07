@@ -20,6 +20,9 @@ class GenerationTask(Base):
     result_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     celery_task_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # 用户在前端选择的模型 id（仅 task_type=image 会写入；其它类型保持 null）
+    # 由 image_models_service 读取 .env AI_IMAGE_MODELS 匹配出完整 endpoint/api_key/protocol
+    model_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
     created_by: Mapped[int] = mapped_column(
         Integer, ForeignKey("users.id"), nullable=False
     )
