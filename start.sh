@@ -256,11 +256,31 @@ check_and_install_deps() {
 
   if [ ! -d "$VENV_DIR" ]; then
     warn "虚拟环境不存在，正在创建..."
-    $python_cmd -m venv "$VENV_DIR"
+    if ! $python_cmd -m venv "$VENV_DIR" 2>/dev/null; then
+      # venv 模块缺失（Ubuntu/Debian 需要单独安装 python3-venv）
+      local py_minor
+      py_minor=$(echo "$python_version" | cut -d. -f1,2)
+      warn "python -m venv 失败，尝试安装 python${py_minor}-venv ..."
+      if command -v apt-get &>/dev/null; then
+        sudo apt-get update -qq && sudo apt-get install -y -qq "python${py_minor}-venv" 2>/dev/null
+      elif command -v yum &>/dev/null; then
+        sudo yum install -y "python${py_minor//.}-venv" 2>/dev/null || true
+      fi
+      # 重试创建
+      if ! $python_cmd -m venv "$VENV_DIR"; then
+        error "无法创建虚拟环境。请手动执行: $python_cmd -m venv $VENV_DIR"
+        exit 1
+      fi
+    fi
     success "虚拟环境已创建: $VENV_DIR (Python $python_version)"
   fi
 
   # 激活虚拟环境
+  if [ ! -f "$VENV_DIR/bin/activate" ]; then
+    error "虚拟环境激活脚本不存在: $VENV_DIR/bin/activate"
+    error "请删除 $VENV_DIR 后重新运行本脚本"
+    exit 1
+  fi
   source "$VENV_DIR/bin/activate"
   success "已激活虚拟环境 (Python $(python --version 2>&1 | awk '{print $2}'))"
 
