@@ -194,7 +194,8 @@ check_and_install_deps() {
       warn "清理残留的 node_modules ..."
       rm -rf "$PROJECT_ROOT/node_modules"
     fi
-    cd "$PROJECT_ROOT" && npm install --progress=true --loglevel=info
+    # 国内服务器使用淘宝镜像源加速
+    cd "$PROJECT_ROOT" && npm install --registry=https://registry.npmmirror.com --progress=true --loglevel=info
     if [ ! -f "$PROJECT_ROOT/node_modules/.bin/vite" ]; then
       error "npm install 后仍找不到 vite，请手动检查: cd $PROJECT_ROOT && npm install"
       exit 1
