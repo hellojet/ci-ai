@@ -186,9 +186,14 @@ check_and_install_deps() {
   success "npm $(npm -v)"
 
   # ---- 前端依赖 ----
-  if [ ! -d "$PROJECT_ROOT/node_modules" ]; then
-    warn "前端依赖未安装，正在安装..."
+  # 不能只看 node_modules 目录存在，还要确认关键二进制（vite）可用
+  if [ ! -d "$PROJECT_ROOT/node_modules" ] || [ ! -f "$PROJECT_ROOT/node_modules/.bin/vite" ]; then
+    warn "前端依赖未安装或不完整，正在安装..."
     cd "$PROJECT_ROOT" && npm install
+    if [ ! -f "$PROJECT_ROOT/node_modules/.bin/vite" ]; then
+      error "npm install 后仍找不到 vite，请手动检查: cd $PROJECT_ROOT && npm install"
+      exit 1
+    fi
     success "前端依赖安装完成"
   else
     success "前端依赖已就绪"
@@ -440,7 +445,7 @@ start_services() {
 
   info "启动前端服务 (Vite on :$FRONTEND_PORT)..."
   cd "$PROJECT_ROOT"
-  nohup npm run dev > "$LOG_DIR/frontend.log" 2>&1 &
+  nohup npx --yes vite --host 0.0.0.0 --port $FRONTEND_PORT > "$LOG_DIR/frontend.log" 2>&1 &
   local frontend_pid=$!
   echo "$frontend_pid" > "$LOG_DIR/frontend.pid"
 
