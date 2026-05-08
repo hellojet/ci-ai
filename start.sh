@@ -189,6 +189,11 @@ check_and_install_deps() {
   # 不能只看 node_modules 目录存在，还要确认关键二进制（vite）可用
   if [ ! -d "$PROJECT_ROOT/node_modules" ] || [ ! -f "$PROJECT_ROOT/node_modules/.bin/vite" ]; then
     warn "前端依赖未安装或不完整，正在安装（首次安装可能需要几分钟）..."
+    # 清理残留的 node_modules（避免 ENOTEMPTY 等脏目录导致 npm install 失败）
+    if [ -d "$PROJECT_ROOT/node_modules" ]; then
+      warn "清理残留的 node_modules ..."
+      rm -rf "$PROJECT_ROOT/node_modules"
+    fi
     cd "$PROJECT_ROOT" && npm install --progress=true --loglevel=info
     if [ ! -f "$PROJECT_ROOT/node_modules/.bin/vite" ]; then
       error "npm install 后仍找不到 vite，请手动检查: cd $PROJECT_ROOT && npm install"
