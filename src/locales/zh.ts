@@ -353,6 +353,14 @@ const zh = {
     creditFailed: '积分更新失败',
     added: '充值',
     deducted: '扣减',
+    createUser: '新增用户',
+    createSuccess: '用户创建成功',
+    createFailed: '用户创建失败',
+    usernameRequired: '请输入用户名',
+    usernamePlaceholder: '输入用户名',
+    password: '密码',
+    passwordRequired: '密码至少 6 位',
+    passwordPlaceholder: '输入密码（至少 6 位）',
   },
 };
 

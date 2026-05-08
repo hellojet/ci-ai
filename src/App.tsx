@@ -46,7 +46,8 @@ export default function App() {
         <BrowserRouter>
           <Routes>
             <Route path="/login" element={<LoginPage />} />
-            <Route path="/register" element={<RegisterPage />} />
+            {/* 注册功能已关闭，重定向到登录页 */}
+            <Route path="/register" element={<Navigate to="/login" replace />} />
             <Route
               element={
                 <ProtectedRoute>
@@ -60,7 +61,14 @@ export default function App() {
               <Route path="/assets/characters/:id" element={<CharacterDetailPage />} />
               <Route path="/assets/environments/:id" element={<EnvironmentDetailPage />} />
               <Route path="/assets/styles/:id" element={<StyleDetailPage />} />
-              <Route path="/settings" element={<SettingsPage />} />
+              <Route
+                path="/settings"
+                element={
+                  <ProtectedRoute requireAdmin>
+                    <SettingsPage />
+                  </ProtectedRoute>
+                }
+              />
               <Route
                 path="/admin/users"
                 element={

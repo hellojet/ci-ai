@@ -43,11 +43,16 @@ export default function AppLayout() {
       icon: <AppstoreOutlined />,
       label: t('layout.assetLibrary'),
     },
-    {
-      key: 'settings',
-      icon: <SettingOutlined />,
-      label: t('layout.settings'),
-    },
+    // Settings 和用户管理仅 admin 可见
+    ...(user?.role === 'admin'
+      ? [
+          {
+            key: 'settings',
+            icon: <SettingOutlined />,
+            label: t('layout.settings'),
+          },
+        ]
+      : []),
     ...(user?.role === 'admin'
       ? [
           {

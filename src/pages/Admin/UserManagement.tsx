@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Typography, Table, Button, Modal, InputNumber, Input, Space, Tag, message } from 'antd';
-import { DollarOutlined, UserOutlined } from '@ant-design/icons';
+import { Typography, Table, Button, Modal, InputNumber, Input, Space, Tag, Select, Form, message } from 'antd';
+import { DollarOutlined, UserOutlined, UserAddOutlined } from '@ant-design/icons';
 import * as adminApi from '@/api/admin';
 import type { User } from '@/types/user';
 import { formatDateTime } from '@/utils/formatters';
@@ -16,6 +16,9 @@ export default function UserManagementPage() {
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [creditDelta, setCreditDelta] = useState(0);
   const [creditReason, setCreditReason] = useState('');
+  const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [createLoading, setCreateLoading] = useState(false);
+  const [createForm] = Form.useForm();
   const { t } = useLocale();
 
   const fetchUsers = async () => {
@@ -34,6 +37,21 @@ export default function UserManagementPage() {
   useEffect(() => {
     fetchUsers();
   }, []);
+
+  const handleCreateUser = async (values: { username: string; password: string; role: string; credits: number }) => {
+    setCreateLoading(true);
+    try {
+      await adminApi.createUser(values);
+      message.success(t('admin.createSuccess'));
+      setCreateModalOpen(false);
+      createForm.resetFields();
+      fetchUsers();
+    } catch (error) {
+      message.error((error as Error).message || t('admin.createFailed'));
+    } finally {
+      setCreateLoading(false);
+    }
+  };
 
   const handleOpenCreditModal = (user: User) => {
     setSelectedUser(user);
@@ -105,7 +123,12 @@ export default function UserManagementPage() {
         <Title level={3} style={{ color: '#fff', margin: 0 }}>
           {t('admin.title')}
         </Title>
-        <span style={{ color: '#888' }}>{t('admin.userCount', { count: total })}</span>
+        <Space>
+          <span style={{ color: '#888' }}>{t('admin.userCount', { count: total })}</span>
+          <Button type="primary" icon={<UserAddOutlined />} onClick={() => setCreateModalOpen(true)}>
+            {t('admin.createUser')}
+          </Button>
+        </Space>
       </div>
 
       <Table
@@ -151,6 +174,48 @@ export default function UserManagementPage() {
             </div>
           )}
         </div>
+      </Modal>
+      {/* 新增用户弹窗 */}
+      <Modal
+        title={t('admin.createUser')}
+        open={createModalOpen}
+        onCancel={() => { setCreateModalOpen(false); createForm.resetFields(); }}
+        footer={null}
+        destroyOnClose
+      >
+        <Form
+          form={createForm}
+          layout="vertical"
+          onFinish={handleCreateUser}
+          initialValues={{ role: 'user', credits: 1000 }}
+          style={{ marginTop: 16 }}
+        >
+          <Form.Item
+            name="username"
+            label={t('admin.user')}
+            rules={[{ required: true, message: t('admin.usernameRequired') }]}
+          >
+            <Input prefix={<UserOutlined />} placeholder={t('admin.usernamePlaceholder')} />
+          </Form.Item>
+          <Form.Item
+            name="password"
+            label={t('admin.password')}
+            rules={[{ required: true, min: 6, message: t('admin.passwordRequired') }]}
+          >
+            <Input.Password placeholder={t('admin.passwordPlaceholder')} />
+          </Form.Item>
+          <Form.Item name="role" label={t('admin.role')}>
+            <Select options={[{ value: 'user', label: 'User' }, { value: 'admin', label: 'Admin' }]} />
+          </Form.Item>
+          <Form.Item name="credits" label={t('admin.credits')}>
+            <InputNumber min={0} style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item>
+            <Button type="primary" htmlType="submit" block loading={createLoading}>
+              {t('admin.createUser')}
+            </Button>
+          </Form.Item>
+        </Form>
       </Modal>
     </div>
   );

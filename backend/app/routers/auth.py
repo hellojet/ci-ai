@@ -12,8 +12,12 @@ router = APIRouter(prefix="/auth", tags=["Auth"])
 
 @router.post("/register", response_model=ApiResponse[UserOut])
 async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
-    user = await register_user(db, body.username, body.password)
-    return ApiResponse(data=UserOut.model_validate(user))
+    """公开注册已关闭。仅 admin 可在 /admin/users/create 创建用户。"""
+    from fastapi import HTTPException
+    raise HTTPException(
+        status_code=403,
+        detail="Registration is disabled. Please contact the administrator.",
+    )
 
 
 @router.post("/login", response_model=ApiResponse[LoginResponse])

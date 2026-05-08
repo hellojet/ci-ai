@@ -71,14 +71,7 @@ export default function LoginPage() {
           </Form.Item>
         </Form>
 
-        <div style={{ textAlign: 'center' }}>
-          <Text type="secondary">
-            {t('login.noAccount')}{' '}
-            <Link to="/register" style={{ color: '#a855f7' }}>
-              {t('login.signUp')}
-            </Link>
-          </Text>
-        </div>
+        {/* 注册入口已关闭，仅 admin 可在用户管理页面新增用户 */}
       </div>
     </div>
   );

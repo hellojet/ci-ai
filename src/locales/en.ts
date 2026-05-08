@@ -334,6 +334,14 @@ const en: Locale = {
     creditFailed: 'Failed to update credits',
     added: 'added',
     deducted: 'deducted',
+    createUser: 'Create User',
+    createSuccess: 'User created successfully',
+    createFailed: 'Failed to create user',
+    usernameRequired: 'Username is required',
+    usernamePlaceholder: 'Enter username',
+    password: 'Password',
+    passwordRequired: 'Password must be at least 6 characters',
+    passwordPlaceholder: 'Enter password (min 6 chars)',
   },
 };
 

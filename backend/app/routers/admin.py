@@ -2,8 +2,9 @@
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -12,12 +13,20 @@ from app.models.user import User
 from app.schemas.admin import UpdateCreditsRequest
 from app.schemas.common import ApiResponse, PaginatedData
 from app.services import admin_service
+from app.utils.security import hash_password
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
 
 
 class UpdateRoleRequest(BaseModel):
     role: str
+
+
+class CreateUserRequest(BaseModel):
+    username: str
+    password: str
+    role: str = "user"
+    credits: int = 1000
 
 
 class UserAdminOut(BaseModel):
@@ -30,6 +39,29 @@ class UserAdminOut(BaseModel):
     avatar_url: str | None = None
     created_at: datetime
     updated_at: datetime
+
+
+@router.post("/users", response_model=ApiResponse[UserAdminOut])
+async def create_user(
+    body: CreateUserRequest,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    """Admin 创建新用户（公开注册已关闭，仅此入口可新增用户）。"""
+    result = await db.execute(select(User).where(User.username == body.username))
+    if result.scalar_one_or_none():
+        raise HTTPException(status_code=409, detail="Username already exists")
+
+    user = User(
+        username=body.username,
+        password_hash=hash_password(body.password),
+        role=body.role,
+        credits=body.credits,
+    )
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+    return ApiResponse(data=UserAdminOut.model_validate(user))
 
 
 @router.get("/users", response_model=ApiResponse[PaginatedData[UserAdminOut]])
