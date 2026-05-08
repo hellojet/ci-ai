@@ -10,6 +10,10 @@ export default defineConfig({
     },
   },
   server: {
+    watch: {
+      // 排除后端目录，避免 inotify watcher 耗尽（ENOSPC）
+      ignored: ['**/backend/**', '**/node_modules/**', '**/.git/**'],
+    },
     proxy: {
       '/api': {
         target: 'http://localhost:8000',
