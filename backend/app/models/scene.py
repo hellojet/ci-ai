@@ -40,6 +40,10 @@ class Scene(Base):
     environment: Mapped[Environment | None] = relationship(
         "Environment", lazy="selectin"
     )
+    # cascade：删除场景时连带删除其下所有 shots（shots.scene_id NOT NULL）
     shots: Mapped[list[Shot]] = relationship(
-        "Shot", back_populates="scene", lazy="selectin"
+        "Shot",
+        back_populates="scene",
+        lazy="selectin",
+        cascade="all, delete-orphan",
     )

@@ -34,5 +34,8 @@ class Character(Base):
     )
 
     views: Mapped[list[CharacterView]] = relationship(
-        "CharacterView", back_populates="character", lazy="selectin"
+        "CharacterView",
+        back_populates="character",
+        lazy="selectin",
+        cascade="all, delete-orphan",
     )

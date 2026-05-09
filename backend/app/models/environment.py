@@ -38,7 +38,5 @@ class Environment(Base):
     images: Mapped[list[EnvironmentImage]] = relationship(
         "EnvironmentImage",
         back_populates="environment",
-        lazy="selectin",
         cascade="all, delete-orphan",
-        order_by="EnvironmentImage.sort_order",
     )

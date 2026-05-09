@@ -95,6 +95,10 @@ class Shot(Base):
         back_populates="shot",
         foreign_keys="[ShotImage.shot_id]",
         lazy="selectin",
+        # cascade：删除 shot 时一并删除其候选图（shot_images.shot_id NOT NULL）。
+        # 与下面 locked_image 的 post_update 配合：SQLAlchemy 会先 UPDATE shots
+        # 把 locked_image_id 置 NULL 解开自引用，再 DELETE shot_images 行。
+        cascade="all, delete-orphan",
     )
     locked_image: Mapped[ShotImage | None] = relationship(
         "ShotImage",
@@ -107,6 +111,8 @@ class Shot(Base):
         back_populates="shot",
         foreign_keys="[ShotVideo.shot_id]",
         lazy="selectin",
+        # 同上：与 locked_video 的 post_update 配合
+        cascade="all, delete-orphan",
     )
     locked_video: Mapped[ShotVideo | None] = relationship(
         "ShotVideo",

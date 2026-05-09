@@ -44,9 +44,19 @@ class Project(Base):
         "User", foreign_keys=[creator_id], lazy="selectin"
     )
     style: Mapped[Style | None] = relationship("Style", lazy="selectin")
+    # cascade="all, delete-orphan"：删除项目时让 ORM 直接删除子 scenes/script，
+    # 而不是把外键 SET NULL（scenes.project_id / script.project_id 都是 NOT NULL，
+    # 默认行为会触发 IntegrityError）。
     scenes: Mapped[list[Scene]] = relationship(
-        "Scene", back_populates="project", lazy="selectin"
+        "Scene",
+        back_populates="project",
+        lazy="selectin",
+        cascade="all, delete-orphan",
     )
     script: Mapped[Script | None] = relationship(
-        "Script", back_populates="project", uselist=False, lazy="selectin"
+        "Script",
+        back_populates="project",
+        uselist=False,
+        lazy="selectin",
+        cascade="all, delete-orphan",
     )
