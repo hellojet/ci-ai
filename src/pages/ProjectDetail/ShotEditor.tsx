@@ -932,7 +932,7 @@ export default function ShotEditor({ shot, projectId, open, onClose }: ShotEdito
               <InputNumber
                 size="small"
                 min={3}
-                max={10}
+                max={15}
                 step={1}
                 style={{ width: '100%' }}
                 value={videoGenParams.duration}
