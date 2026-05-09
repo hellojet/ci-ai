@@ -40,6 +40,31 @@ REQUEST_TIMEOUT = 300.0
 
 VALID_SIZES = {"1024x1024", "1024x1536", "1536x1024"}
 
+# 比例 + 分辨率 → (width, height)
+# 上游 gpt-image-2 只接受 VALID_SIZES 三档（1024x1024 / 1024x1536 / 1536x1024），
+# 这里把用户在前端选的高分辨率"语义档位"映射成上游能识别的最近档位，避免直接报错。
+# - 横屏（16:9 / 4:3 / 3:2）→ 1536x1024
+# - 竖屏（9:16 / 3:4 / 2:3）→ 1024x1536
+# - 方形（1:1）            → 1024x1024
+# resolution 不影响最终上游档位（上游只有这三档），仅作为日志可读字段保留。
+_LANDSCAPE_RATIOS = {"16:9", "4:3", "3:2"}
+_PORTRAIT_RATIOS = {"9:16", "3:4", "2:3"}
+
+
+def resolve_image_size(ratio: str | None, _resolution: str | None = None) -> tuple[int, int]:
+    """根据 ratio/resolution 推导出 (width, height)。
+
+    上游 gpt-image-2 只接受 VALID_SIZES，所以这里只做横/竖/方三选一。
+    """
+    if ratio in _LANDSCAPE_RATIOS:
+        return 1536, 1024
+    if ratio in _PORTRAIT_RATIOS:
+        return 1024, 1536
+    if ratio == "1:1":
+        return 1024, 1024
+    # 默认：竖屏 9:16（与前端默认值一致）
+    return 1024, 1536
+
 UPLOADS_DIR = os.path.join(os.path.dirname(__file__), "..", "uploads", "generated")
 os.makedirs(UPLOADS_DIR, exist_ok=True)
 
@@ -126,10 +151,20 @@ def _build_payload(
     当 reference_images 非空时，按上游契约加 image 字段：
         "image": [{"type": "input_image", "image_url": <http url 或 data URL>}, ...]
     经实测，上游两种形式都能接受，我们优先传 http url 以减小请求体。
+
+    width/height 不在 VALID_SIZES 时，按照"长宽比" 兜底到最近的合法档位，
+    避免上游报"size invalid"。前端的 ratio 已经由 resolve_image_size() 翻译成 (w, h)，
+    这里再做一次保护。
     """
     size_str = f"{width}x{height}"
     if size_str not in VALID_SIZES:
-        size_str = "1536x1024"
+        # 用宽高比决定回退档位，避免误把竖图传成横图
+        if width > height:
+            size_str = "1536x1024"
+        elif height > width:
+            size_str = "1024x1536"
+        else:
+            size_str = "1024x1024"
 
     payload: dict = {
         "model": "gpt-image-2",
@@ -495,8 +530,26 @@ def _build_chat_messages(
 
     content: list[dict] = [{"type": "text", "text": prompt}]
     for url in urls:
-        content.append({"type": "image_url", "image_url": {"url": url}})
+        content.append({"type": "image_url", "image_url": {"url": url, "detail": "high"}})
     return [{"role": "user", "content": content}]
+
+
+def _resolve_gemini_image_size(resolution: str | None) -> str:
+    """将前端 resolution 值映射为 Gemini API 的 imageSize 参数。
+
+    前端可能传来的值: "720p", "1080p", "2K", "4K" 等。
+    API 接受的值: "1K", "2K", "4K" 等，以及可能的 "1080p" 直通。
+    """
+    if not resolution:
+        return "1K"
+    upper = resolution.upper().strip()
+    mapping = {
+        "720P": "1K",
+        "1080P": "1K",
+        "2K": "2K",
+        "4K": "4K",
+    }
+    return mapping.get(upper, "1K")
 
 
 def generate_sync_via_chat(
@@ -507,12 +560,15 @@ def generate_sync_via_chat(
     count: int = 1,
     reference_image_url: str | None = None,
     reference_image_urls: list[str] | None = None,
+    ratio: str | None = None,
+    resolution: str | None = None,
 ) -> list[str]:
     """走 Chat Completions + modalities=["TEXT","IMAGE"] 协议生成图片（Gemini 系列）。
 
     - reference_image_urls 支持多图参考（该协议原生支持 multimodal content 数组）
     - reference_image_url 仅用于向下兼容
     - count 参数当前协议不原生支持批量，故采用"多次单图"循环实现
+    - ratio/resolution 通过 extendParams.imageConfig 传入上游，控制画面比例和分辨率
     """
     if not model:
         raise HTTPException(status_code=400, detail="image model is required for chat_completions_modalities protocol")
@@ -524,14 +580,28 @@ def generate_sync_via_chat(
     ref_urls: list[str] = [u for u in (reference_image_urls or []) if u]
     if not ref_urls and reference_image_url:
         ref_urls = [reference_image_url]
+
+    aspect_ratio = ratio or "9:16"
+    image_size = _resolve_gemini_image_size(resolution)
+
     logger.info(
-        "Chat-image API request: endpoint=%s, model=%s, n=%d, ref_images=%d, prompt=%.80s...",
-        endpoint, model, count, len(ref_urls), prompt,
+        "Chat-image API request: endpoint=%s, model=%s, n=%d, ref_images=%d, "
+        "aspectRatio=%s, imageSize=%s, prompt=%.80s...",
+        endpoint, model, count, len(ref_urls), aspect_ratio, image_size, prompt,
     )
     payload_base = {
         "model": model,
         "messages": _build_chat_messages(prompt, reference_image_urls=ref_urls),
         "modalities": ["TEXT", "IMAGE"],
+        "extendParams": {
+            "imageConfig": {
+                "aspectRatio": aspect_ratio,
+                "imageSize": image_size,
+                "imageOutputOptions": {
+                    "mimeType": "image/png",
+                },
+            },
+        },
     }
 
     all_urls: list[str] = []

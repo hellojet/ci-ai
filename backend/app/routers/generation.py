@@ -36,6 +36,7 @@ async def create_generation_task(
         task_type=body.task_type,
         user_id=current_user.id,
         model_id=body.model_id,
+        params=body.params,
     )
     return ApiResponse(
         data=GenerateResponse(
@@ -71,6 +72,7 @@ async def create_batch_generation_tasks(
         task_type=body.task_type,
         user_id=current_user.id,
         model_id=body.model_id,
+        params=body.params,
     )
     return ApiResponse(
         data=BatchGenerateResponse(

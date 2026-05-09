@@ -1,6 +1,6 @@
-import { useState, useEffect, useMemo } from 'react';
-import { Drawer, Form, Input, Select, Button, Typography, Space, Divider, Tag, Empty, Image, Collapse, Switch, message } from 'antd';
-import { SaveOutlined, EyeOutlined, CheckCircleFilled, ReloadOutlined } from '@ant-design/icons';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { Drawer, Form, Input, Select, Button, Typography, Space, Divider, Tag, Empty, Image, Collapse, Switch, InputNumber, message } from 'antd';
+import { SaveOutlined, EyeOutlined, CheckCircleFilled, ReloadOutlined, PictureOutlined, VideoCameraOutlined } from '@ant-design/icons';
 import type {
   Shot,
   PromptPreview,
@@ -11,14 +11,44 @@ import type {
 import { PROMPT_MODULE_META, DEFAULT_PROMPT_MODULES } from '@/types/shot';
 import type { Character, CharacterView } from '@/types/character';
 import type { EnvironmentImage } from '@/types/environment';
+import type { ImageGenParams, VideoGenParams } from '@/types/generation';
 import { useProjectStore } from '@/stores/projectStore';
 import { useAssetStore } from '@/stores/assetStore';
+import { useGenerationStore } from '@/stores/generationStore';
 import { CAMERA_ANGLES } from '@/utils/constants';
 import * as shotApi from '@/api/shots';
 import * as characterApi from '@/api/characters';
 import * as environmentApi from '@/api/environments';
 import ImageSelector from './ImageSelector';
 import VideoSelector from './VideoSelector';
+
+// 比例 / 分辨率 / 时长 选项常量：与 video_adapter._RESOLUTION_LONG_EDGE、image_adapter.resolve_image_size 保持一致
+const RATIO_OPTIONS = [
+  { value: '9:16', label: '9:16（竖屏）' },
+  { value: '16:9', label: '16:9（横屏）' },
+  { value: '1:1', label: '1:1（方形）' },
+  { value: '4:3', label: '4:3' },
+  { value: '3:4', label: '3:4' },
+];
+const IMAGE_RESOLUTION_OPTIONS = [
+  { value: '720p', label: '720p' },
+  { value: '1080p', label: '1080p' },
+  { value: '2k', label: '2K' },
+];
+const VIDEO_RESOLUTION_OPTIONS = [
+  { value: '480p', label: '480p' },
+  { value: '720p', label: '720p' },
+  { value: '1080p', label: '1080p' },
+];
+
+// 默认参数值（与后端 generation_tasks.py 的 DEFAULT_IMAGE_PARAMS / DEFAULT_VIDEO_PARAMS 保持一致）
+const DEFAULT_IMAGE_PARAMS: ImageGenParams = { ratio: '9:16', resolution: '1080p' };
+const DEFAULT_VIDEO_PARAMS: VideoGenParams = {
+  ratio: '9:16',
+  resolution: '1080p',
+  duration: 5,
+  watermark: false,
+};
 
 const { TextArea } = Input;
 const { Text, Paragraph } = Typography;
@@ -33,6 +63,13 @@ interface ShotEditorProps {
 export default function ShotEditor({ shot, projectId, open, onClose }: ShotEditorProps) {
   const { updateShot, currentProject, lockImage, lockVideo } = useProjectStore();
   const { characters, fetchCharacters } = useAssetStore();
+  const {
+    generateForShot,
+    fetchImageModels,
+    fetchVideoModels,
+    imageModels,
+    videoModels,
+  } = useGenerationStore();
   const [form] = Form.useForm();
   // 图片 / 视频两份独立的 prompt 预览 + loading + 开关 + 自定义文本
   const [imagePromptPreview, setImagePromptPreview] = useState<PromptPreview | null>(null);
@@ -45,6 +82,14 @@ export default function ShotEditor({ shot, projectId, open, onClose }: ShotEdito
   const [customVideoPrompt, setCustomVideoPrompt] = useState<string>('');
   const [saving, setSaving] = useState(false);
 
+  // 生成参数（与默认值对齐）+ 选定的模型 id（不选则走后端默认）+ 提交瞬间 loading
+  const [imageGenParams, setImageGenParams] = useState<ImageGenParams>(DEFAULT_IMAGE_PARAMS);
+  const [videoGenParams, setVideoGenParams] = useState<VideoGenParams>(DEFAULT_VIDEO_PARAMS);
+  const [imageModelId, setImageModelId] = useState<string | undefined>(undefined);
+  const [videoModelId, setVideoModelId] = useState<string | undefined>(undefined);
+  const [submittingImage, setSubmittingImage] = useState(false);
+  const [submittingVideo, setSubmittingVideo] = useState(false);
+
   // 当前已选角色 id 列表（同步 form 字段 character_ids）
   const [selectedCharacterIds, setSelectedCharacterIds] = useState<number[]>([]);
   // 每个角色 id 锁定的 view id：{ [characterId]: viewId }
@@ -55,6 +100,25 @@ export default function ShotEditor({ shot, projectId, open, onClose }: ShotEdito
   const [lockedEnvImageId, setLockedEnvImageId] = useState<number | null>(null);
   // 当前分镜所属场景的 environment（含 images）
   const [sceneEnvImages, setSceneEnvImages] = useState<EnvironmentImage[]>([]);
+  // Form 表单关键字段的"瞬时值"。Form 内部状态变化不会触发 React rerender，
+  // 这里 mirror 一份用于：
+  //   1) 驱动"提示词预览自动同步"的 effect 依赖
+  //   2) 自动同步落库时直接读取，避免依赖 form.getFieldsValue() 的不可序列化引用
+  const [formSnapshot, setFormSnapshot] = useState<{
+    title?: string;
+    narration?: string;
+    dialogue?: string;
+    subtitle?: string;
+    action_description?: string;
+    camera_angle?: string;
+  }>({});
+  // 初始化首帧标记：open=true 后第一次拉到 shot 数据进行 setState 时，会把所有受控字段
+  // 都"重新写一遍"（imageModules / customImagePrompt / charViewLockMap / formSnapshot 等），
+  // 这些受控字段的变化会被自动同步 effect 误判为"用户改动"，导致一次空 PATCH。
+  // 用 ref 标记初始化完成，避免误触发。
+  const initializedRef = useRef(false);
+  // 防抖句柄：每次依赖变化都重置一次 timer，避免短时间内频繁打接口
+  const autoSyncTimerRef = useRef<number | null>(null);
 
   // 从 currentProject 反查当前 shot 所属 scene，再拿到 environment
   const currentScene = useMemo(() => {
@@ -64,6 +128,10 @@ export default function ShotEditor({ shot, projectId, open, onClose }: ShotEdito
 
   useEffect(() => {
     if (shot && open) {
+      // 切换到新 shot / 重新打开：先关掉自动同步开关，等 setState 全部完成
+      // 后再打开，避免初始化的 setState 被自动同步 effect 误判为"用户改动"
+      initializedRef.current = false;
+
       const initialCharIds = shot.characters.map((char) => char.id);
       form.setFieldsValue({
         title: shot.title,
@@ -75,6 +143,15 @@ export default function ShotEditor({ shot, projectId, open, onClose }: ShotEdito
         character_ids: initialCharIds,
       });
       setSelectedCharacterIds(initialCharIds);
+      // 同步 form 关键字段到 snapshot，让自动同步 effect 能感知
+      setFormSnapshot({
+        title: shot.title ?? undefined,
+        narration: shot.narration ?? undefined,
+        dialogue: shot.dialogue ?? undefined,
+        subtitle: shot.subtitle ?? undefined,
+        action_description: shot.action_description ?? undefined,
+        camera_angle: shot.camera_angle ?? undefined,
+      });
 
       // 初始化每个角色锁定的 view：以 shot.ref_character_view_ids 为准，
       // 旧数据只有 ref_character_view_id 时也兼容读进来（放到"未知角色"键也没关系，
@@ -97,17 +174,102 @@ export default function ShotEditor({ shot, projectId, open, onClose }: ShotEdito
       // 拉资产基础数据（角色列表）
       fetchCharacters();
 
-      // 拉每个已选角色的详情（含 views）
-      initialCharIds.forEach((charId) => {
-        loadCharacterDetail(charId, refViewIds);
-      });
+      // 拉每个已选角色的详情（含 views），**必须等全部完成后**才开启自动同步开关。
+      // 否则 charViewLockMap 还是 {} 时自动同步 effect 就触发，会把
+      // ref_character_view_ids=[] 写进数据库，覆盖掉原来的参考图。
+      const charDetailPromises = initialCharIds.map((charId) =>
+        loadCharacterDetail(charId, refViewIds),
+      );
 
       // 同时拉图片 + 视频两份提示词预览
       fetchPrompt('image');
       fetchPrompt('video');
+
+      // 拉模型清单（store 自带缓存，重复 open 也只会走一次网络）
+      fetchImageModels().catch(() => undefined);
+      fetchVideoModels().catch(() => undefined);
+
+      // 等所有角色详情拉取完成（charViewLockMap 已被正确填充）后，
+      // 再开启自动同步开关，避免初始化阶段的空 charViewLockMap 覆盖数据库。
+      let cancelled = false;
+      Promise.all(charDetailPromises).finally(() => {
+        if (!cancelled) {
+          initializedRef.current = true;
+        }
+      });
+      return () => { cancelled = true; };
+    } else if (!open) {
+      // 关闭抽屉时立即关掉开关，避免后续残余状态变化触发同步
+      initializedRef.current = false;
+      // 清掉防抖句柄，避免延迟 PATCH 在抽屉关闭后才触发
+      if (autoSyncTimerRef.current) {
+        window.clearTimeout(autoSyncTimerRef.current);
+        autoSyncTimerRef.current = null;
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shot?.id, open]);
+
+  /**
+   * "提示词预览实时同步"自动同步 effect：
+   * 监听文本编辑区 / 模块开关 / 自定义提示词 / 角色参考图锁定 / 场景参考图锁定，
+   * 防抖 350ms 后只更新预览相关字段，并立即重拉两份 prompt 预览。
+   *
+   * 设计要点：
+   * - 用 initializedRef 跳过 open 时的初始化首帧，避免空 PATCH
+   * - 不在 effect 里读 form.getFieldsValue（不会触发 rerender），用 formSnapshot 代替
+   * - 这里调用的 updateShot 必须是"幂等的局部更新"——只发送预览相关字段，
+   *   不发送 character_ids 等需要数据库重建关系的字段，避免引入额外副作用
+   */
+  useEffect(() => {
+    if (!shot || !open || !initializedRef.current) return;
+
+    if (autoSyncTimerRef.current) {
+      window.clearTimeout(autoSyncTimerRef.current);
+    }
+    autoSyncTimerRef.current = window.setTimeout(async () => {
+      autoSyncTimerRef.current = null;
+      try {
+        const refCharacterViewIds = selectedCharacterIds
+          .map((charId) => charViewLockMap[charId])
+          .filter((vid): vid is number => typeof vid === 'number');
+        await updateShot(shot.id, {
+          ...formSnapshot,
+          ref_character_view_ids: refCharacterViewIds,
+          ref_environment_image_id: lockedEnvImageId,
+          prompt_modules_image: imageModules,
+          prompt_modules_video: videoModules,
+          custom_prompt_image: customImagePrompt,
+          custom_prompt_video: customVideoPrompt,
+        });
+        // 落库成功后重拉两份预览，让"最终提示词"区域显示与服务器一致
+        fetchPrompt('image');
+        fetchPrompt('video');
+      } catch {
+        // 自动同步失败不打扰用户（保留显式"保存"按钮作为兜底）
+        // 但如果用户看到预览没更新，可以点保存按钮强制走一遍 + 提示
+      }
+    }, 350);
+
+    return () => {
+      if (autoSyncTimerRef.current) {
+        window.clearTimeout(autoSyncTimerRef.current);
+        autoSyncTimerRef.current = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    shot?.id,
+    open,
+    formSnapshot,
+    selectedCharacterIds,
+    charViewLockMap,
+    lockedEnvImageId,
+    imageModules,
+    videoModules,
+    customImagePrompt,
+    customVideoPrompt,
+  ]);
 
   // 分镜所属场景的 environment 图片：跟 scene / environment_id 联动
   // 每次 scene 切换（包括"从未关联到刚关联"）都主动拉一次最新 environment，
@@ -135,9 +297,12 @@ export default function ShotEditor({ shot, projectId, open, onClose }: ShotEdito
       .getEnvironment(envId)
       .then((env) => {
         if (cancelled) return;
-        setSceneEnvImages(
-          (env.images ?? []).filter((img) => img.status === 'completed' && !!img.image_url)
+        const available = (env.images ?? []).filter(
+          (img) => img.status === 'completed' && !!img.image_url
         );
+        setSceneEnvImages(available);
+        // 若数据库没有保存过场景参考图，默认选中第一张
+        setLockedEnvImageId((prev) => (prev == null && available.length > 0 ? available[0].id : prev));
       })
       .catch(() => {
         if (!cancelled) setSceneEnvImages((prev) => prev);
@@ -152,10 +317,15 @@ export default function ShotEditor({ shot, projectId, open, onClose }: ShotEdito
     try {
       const char = await characterApi.getCharacter(characterId);
       setCharDetailMap((prev) => ({ ...prev, [characterId]: char }));
-      // 从已保存的 refViewIds 中挑出属于这个角色的那一张（若有），落到 charViewLockMap
-      const matchedView = (char.views ?? []).find((v) => refViewIds.includes(v.id));
-      if (matchedView) {
-        setCharViewLockMap((prev) => ({ ...prev, [characterId]: matchedView.id }));
+      // 从已保存的 refViewIds 中挑出属于这个角色的那一张（若有），落到 charViewLockMap；
+      // 若数据库没保存过参考图（refViewIds 中无匹配），则默认选中该角色的第一张可用 view
+      const availableViews = (char.views ?? []).filter(
+        (v) => v.status === 'completed' && !!v.image_url
+      );
+      const matchedView = availableViews.find((v) => refViewIds.includes(v.id));
+      const defaultView = matchedView ?? availableViews[0];
+      if (defaultView) {
+        setCharViewLockMap((prev) => ({ ...prev, [characterId]: defaultView.id }));
       }
     } catch {
       // 拉失败不阻塞编辑器，用户照样能切角色
@@ -257,10 +427,23 @@ export default function ShotEditor({ shot, projectId, open, onClose }: ShotEdito
       });
       return next;
     });
-    // 拉未加载过详情的新角色
+    // 拉未加载过详情的新角色；对已缓存角色补充默认选中
     value.forEach((charId) => {
       if (!charDetailMap[charId]) {
         loadCharacterDetail(charId, []);
+      } else {
+        // 已缓存但可能刚被清理掉锁定记录，需补充默认选中第一张可用 view
+        setCharViewLockMap((prev) => {
+          if (prev[charId] !== undefined) return prev;
+          const cached = charDetailMap[charId];
+          const availableViews = (cached.views ?? []).filter(
+            (v: any) => v.status === 'completed' && !!v.image_url
+          );
+          if (availableViews.length > 0) {
+            return { ...prev, [charId]: availableViews[0].id };
+          }
+          return prev;
+        });
       }
     });
   };
@@ -303,17 +486,66 @@ export default function ShotEditor({ shot, projectId, open, onClose }: ShotEdito
     }
   };
 
+  /** 在 ShotEditor 内一键发起生成（带当前用户选择的 ratio/resolution/duration/watermark）。
+   *  设计约束：
+   *  - 任何时候都要禁止重复点击：用 submittingImage / submittingVideo 控制
+   *  - 视频任务前置条件：shot.locked_image_id 不为空，否则后端必然失败，前端提前拦截
+   *  - 模型 id 不选时透传 undefined，由后端用默认模型
+   */
+  const handleGenerateImage = async () => {
+    if (!shot || submittingImage) return;
+    setSubmittingImage(true);
+    try {
+      await generateForShot(projectId, shot.id, 'image', imageModelId, imageGenParams);
+      message.success('图片生成已提交');
+    } catch (error) {
+      message.error((error as Error).message || '图片生成失败');
+    } finally {
+      setSubmittingImage(false);
+    }
+  };
+
+  const handleGenerateVideo = async () => {
+    if (!shot || submittingVideo) return;
+    if (!shot.locked_image_id) {
+      message.warning('请先锁定一张候选图作为视频首帧');
+      return;
+    }
+    setSubmittingVideo(true);
+    try {
+      await generateForShot(projectId, shot.id, 'video', videoModelId, videoGenParams);
+      message.success('视频生成已提交');
+    } catch (error) {
+      message.error((error as Error).message || '视频生成失败');
+    } finally {
+      setSubmittingVideo(false);
+    }
+  };
+
   if (!shot) return null;
+
+  // 4 象限网格的通用样式：每个象限都有独立背景 + 边框 + 内边距，便于视觉区分
+  const quadrantStyle: React.CSSProperties = {
+    background: '#141414',
+    border: '1px solid #1e1e1e',
+    borderRadius: 8,
+    padding: 12,
+    minHeight: 0, // 让 flex 子元素能正确缩放
+    display: 'flex',
+    flexDirection: 'column',
+    overflow: 'auto',
+  };
 
   return (
     <Drawer
       title={shot.title || '镜头编辑'}
       open={open}
       onClose={onClose}
-      width={480}
+      // 拉宽到约半屏。用百分号让大屏 / 小屏自适应；最低 720px 防止过窄。
+      width="50vw"
       styles={{
         header: { background: '#141414', borderBottom: '1px solid #1e1e1e' },
-        body: { background: '#0c0c0c', padding: 16 },
+        body: { background: '#0c0c0c', padding: 12 },
       }}
       extra={
         <Button type="primary" icon={<SaveOutlined />} size="small" onClick={handleSave} loading={saving}>
@@ -321,281 +553,455 @@ export default function ShotEditor({ shot, projectId, open, onClose }: ShotEdito
         </Button>
       }
     >
-      <Form form={form} layout="vertical">
-        <Form.Item name="title" label="标题">
-          <Input placeholder="镜头标题" />
-        </Form.Item>
-
-        <Form.Item name="narration" label="旁白">
-          <TextArea rows={2} placeholder="旁白文案..." />
-        </Form.Item>
-
-        <Form.Item name="dialogue" label="对白">
-          <TextArea rows={2} placeholder="角色对白..." />
-        </Form.Item>
-
-        <Form.Item name="subtitle" label="字幕">
-          <Input placeholder="字幕内容" />
-        </Form.Item>
-
-        <Form.Item name="action_description" label="动作描述">
-          <TextArea rows={2} placeholder="描述镜头中的动作..." />
-        </Form.Item>
-
-        <Form.Item name="camera_angle" label="镜头角度">
-          <Select
-            placeholder="请选择镜头角度"
-            allowClear
-            options={CAMERA_ANGLES.map((angle) => ({ value: angle.value, label: angle.label }))}
-          />
-        </Form.Item>
-
-        <Form.Item name="character_ids" label="角色">
-          <Select
-            mode="multiple"
-            placeholder="请选择角色"
-            onChange={handleCharacterIdsChange}
-            options={characters.map((char) => ({ value: char.id, label: char.name }))}
-          />
-        </Form.Item>
-      </Form>
-
-      <Divider style={{ borderColor: '#1e1e1e' }} />
-
-      {/* 角色参考图：每个已选角色各自展示其 views，可锁定一张 */}
-      <div style={{ marginBottom: 16 }}>
-        <Text strong style={{ color: '#fff', display: 'block', marginBottom: 8 }}>
-          角色参考图
-          <Text type="secondary" style={{ fontSize: 11, marginLeft: 8, fontWeight: 400 }}>
-            每个角色可锁定一张作为参考图，点击再次取消
+      {/* 4 象限布局：上下两行各占 50%，左右两列各占 50%。
+          - 左上：基础信息文本编辑区（旁白/对白/字幕/动作/角色）
+          - 右上：角色参考图 + 场景参考图
+          - 左下：候选图片提示词 + 候选图展示 + 图片生成按钮（含 ratio/resolution）
+          - 右下：候选视频提示词 + 候选视频展示 + 视频生成按钮（含 ratio/resolution/duration/watermark） */}
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: '1fr 1fr',
+          gridTemplateRows: 'minmax(320px, auto) minmax(420px, auto)',
+          gap: 12,
+        }}
+      >
+        {/* ─────────── 左上：文本编辑区 ─────────── */}
+        <div style={quadrantStyle}>
+          <Text strong style={{ color: '#fff', display: 'block', marginBottom: 8 }}>
+            文本编辑
           </Text>
-        </Text>
-        {selectedCharacterIds.length === 0 ? (
-          <Empty
-            image={Empty.PRESENTED_IMAGE_SIMPLE}
-            description={<Text type="secondary" style={{ fontSize: 12 }}>请先选择角色</Text>}
-            style={{ margin: '8px 0' }}
-          />
-        ) : (
-          <Space direction="vertical" size={12} style={{ width: '100%' }}>
-            {selectedCharacterIds.map((charId) => {
-              const char = charDetailMap[charId];
-              const views: CharacterView[] = (char?.views ?? []).filter(
-                (v) => v.status === 'completed' && !!v.image_url
-              );
-              const lockedViewId = charViewLockMap[charId];
-              return (
-                <div key={charId}>
-                  <Text style={{ color: '#ccc', fontSize: 12, display: 'block', marginBottom: 6 }}>
-                    {char?.name ?? `角色 #${charId}`}
-                    {lockedViewId ? (
-                      <Tag color="green" style={{ marginLeft: 8, fontSize: 10 }}>已锁定</Tag>
-                    ) : null}
-                  </Text>
-                  {views.length === 0 ? (
-                    <Text type="secondary" style={{ fontSize: 11 }}>该角色暂无可用视图</Text>
-                  ) : (
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6 }}>
-                      {views.map((view) => {
-                        const isLocked = view.id === lockedViewId;
-                        return (
-                          <div
-                            key={view.id}
-                            onClick={() => handleToggleCharView(charId, view.id)}
-                            style={{
-                              position: 'relative',
-                              borderRadius: 6,
-                              overflow: 'hidden',
-                              border: isLocked ? '2px solid #52c41a' : '2px solid #2a2a2a',
-                              cursor: 'pointer',
-                            }}
-                          >
-                            <Image
-                              src={view.image_url ?? ''}
-                              alt={view.view_type ?? 'view'}
-                              preview={false}
-                              style={{ width: '100%', aspectRatio: '1/1', objectFit: 'cover' }}
-                            />
-                            {isLocked && (
+          <Form
+            form={form}
+            layout="vertical"
+            size="small"
+            // 任意字段变化都同步到 formSnapshot，驱动"提示词预览"自动同步 effect。
+            // antd Form 的内部 store 不会触发 React rerender，必须显式 mirror 一份。
+            onValuesChange={(_changed, all) => {
+              setFormSnapshot({
+                title: all.title,
+                narration: all.narration,
+                dialogue: all.dialogue,
+                subtitle: all.subtitle,
+                action_description: all.action_description,
+                camera_angle: all.camera_angle,
+              });
+            }}
+          >
+            <Form.Item name="title" label="标题" style={{ marginBottom: 8 }}>
+              <Input placeholder="镜头标题" />
+            </Form.Item>
+            <Form.Item name="narration" label="旁白" style={{ marginBottom: 8 }}>
+              <TextArea rows={2} placeholder="旁白文案..." />
+            </Form.Item>
+            <Form.Item name="dialogue" label="对白" style={{ marginBottom: 8 }}>
+              <TextArea rows={2} placeholder="角色对白..." />
+            </Form.Item>
+            <Form.Item name="subtitle" label="字幕" style={{ marginBottom: 8 }}>
+              <Input placeholder="字幕内容" />
+            </Form.Item>
+            <Form.Item name="action_description" label="动作描述" style={{ marginBottom: 8 }}>
+              <TextArea rows={2} placeholder="描述镜头中的动作..." />
+            </Form.Item>
+            <Form.Item name="camera_angle" label="镜头角度" style={{ marginBottom: 8 }}>
+              <Select
+                placeholder="请选择镜头角度"
+                allowClear
+                options={CAMERA_ANGLES.map((angle) => ({ value: angle.value, label: angle.label }))}
+              />
+            </Form.Item>
+          </Form>
+        </div>
+
+        {/* ─────────── 右上：角色 + 场景参考区 ─────────── */}
+        <div style={quadrantStyle}>
+          <Text strong style={{ color: '#fff', display: 'block', marginBottom: 8 }}>
+            角色 / 场景参考
+          </Text>
+
+          {/* 角色选择 */}
+          <div style={{ marginBottom: 12 }}>
+            <Text style={{ color: '#ccc', fontSize: 12, display: 'block', marginBottom: 6 }}>
+              选择角色
+            </Text>
+            <Select
+              mode="multiple"
+              placeholder="请选择角色"
+              value={selectedCharacterIds}
+              onChange={handleCharacterIdsChange}
+              options={characters.map((char) => ({ value: char.id, label: char.name }))}
+              style={{ width: '100%' }}
+              size="small"
+            />
+          </div>
+
+          {/* 角色参考图：每个已选角色各自展示其 views，可锁定一张 */}
+          <div style={{ marginBottom: 12 }}>
+            <Text style={{ color: '#ccc', fontSize: 12, display: 'block', marginBottom: 6 }}>
+              角色参考图
+              <Text type="secondary" style={{ fontSize: 11, marginLeft: 8 }}>
+                每个角色可锁定一张，再次点击取消
+              </Text>
+            </Text>
+            {selectedCharacterIds.length === 0 ? (
+              <Empty
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                description={<Text type="secondary" style={{ fontSize: 12 }}>请先选择角色</Text>}
+                style={{ margin: '4px 0' }}
+              />
+            ) : (
+              <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                {selectedCharacterIds.map((charId) => {
+                  const char = charDetailMap[charId];
+                  const views: CharacterView[] = (char?.views ?? []).filter(
+                    (v) => v.status === 'completed' && !!v.image_url
+                  );
+                  const lockedViewId = charViewLockMap[charId];
+                  return (
+                    <div key={charId}>
+                      <Text style={{ color: '#aaa', fontSize: 12, display: 'block', marginBottom: 4 }}>
+                        {char?.name ?? `角色 #${charId}`}
+                        {lockedViewId ? (
+                          <Tag color="green" style={{ marginLeft: 6, fontSize: 10 }}>已锁定</Tag>
+                        ) : null}
+                      </Text>
+                      {views.length === 0 ? (
+                        <Text type="secondary" style={{ fontSize: 11 }}>该角色暂无可用视图</Text>
+                      ) : (
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6 }}>
+                          {views.map((view) => {
+                            const isLocked = view.id === lockedViewId;
+                            return (
                               <div
+                                key={view.id}
+                                onClick={() => handleToggleCharView(charId, view.id)}
                                 style={{
-                                  position: 'absolute',
-                                  top: 2,
-                                  right: 2,
-                                  background: 'rgba(82, 196, 26, 0.9)',
-                                  borderRadius: 4,
-                                  padding: '1px 4px',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  gap: 2,
+                                  position: 'relative',
+                                  borderRadius: 6,
+                                  overflow: 'hidden',
+                                  border: isLocked ? '2px solid #52c41a' : '2px solid #2a2a2a',
+                                  cursor: 'pointer',
                                 }}
                               >
-                                <CheckCircleFilled style={{ fontSize: 10, color: '#fff' }} />
+                                <Image
+                                  src={view.image_url ?? ''}
+                                  alt={view.view_type ?? 'view'}
+                                  preview={false}
+                                  style={{ width: '100%', aspectRatio: '1/1', objectFit: 'cover' }}
+                                />
+                                {isLocked && (
+                                  <div
+                                    style={{
+                                      position: 'absolute',
+                                      top: 2,
+                                      right: 2,
+                                      background: 'rgba(82, 196, 26, 0.9)',
+                                      borderRadius: 4,
+                                      padding: '1px 4px',
+                                    }}
+                                  >
+                                    <CheckCircleFilled style={{ fontSize: 10, color: '#fff' }} />
+                                  </div>
+                                )}
                               </div>
-                            )}
-                          </div>
-                        );
-                      })}
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
-              );
-            })}
-          </Space>
-        )}
-      </div>
+                  );
+                })}
+              </Space>
+            )}
+          </div>
 
-      <Divider style={{ borderColor: '#1e1e1e' }} />
+          <Divider style={{ borderColor: '#1e1e1e', margin: '8px 0' }} />
 
-      {/* 场景参考图：当前分镜所属场景的 images，可锁定一张 */}
-      <div style={{ marginBottom: 16 }}>
-        <Text strong style={{ color: '#fff', display: 'block', marginBottom: 8 }}>
-          场景参考图
-          <Text type="secondary" style={{ fontSize: 11, marginLeft: 8, fontWeight: 400 }}>
-            从本镜头所属场景的图片中锁定一张
-          </Text>
-        </Text>
-        {!(currentScene?.environment_id || currentScene?.environment?.id) ? (
-          <Text type="secondary" style={{ fontSize: 11 }}>当前场景未关联环境资产</Text>
-        ) : sceneEnvImages.length === 0 ? (
-          <Empty
-            image={Empty.PRESENTED_IMAGE_SIMPLE}
-            description={<Text type="secondary" style={{ fontSize: 12 }}>该场景暂无可用图片</Text>}
-            style={{ margin: '8px 0' }}
-          />
-        ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6 }}>
-            {sceneEnvImages.map((img) => {
-              const isLocked = img.id === lockedEnvImageId;
-              return (
-                <div
-                  key={img.id}
-                  onClick={() => handleToggleEnvImage(img.id)}
-                  style={{
-                    position: 'relative',
-                    borderRadius: 6,
-                    overflow: 'hidden',
-                    border: isLocked ? '2px solid #52c41a' : '2px solid #2a2a2a',
-                    cursor: 'pointer',
-                  }}
-                >
-                  <Image
-                    src={img.image_url}
-                    alt={img.view_type ?? 'scene'}
-                    preview={false}
-                    style={{ width: '100%', aspectRatio: '16/9', objectFit: 'cover' }}
-                  />
-                  {isLocked && (
+          {/* 场景参考图：当前分镜所属场景的 images，可锁定一张 */}
+          <div>
+            <Text style={{ color: '#ccc', fontSize: 12, display: 'block', marginBottom: 6 }}>
+              场景参考图
+              <Text type="secondary" style={{ fontSize: 11, marginLeft: 8 }}>
+                从本镜头所属场景的图片中锁定一张
+              </Text>
+            </Text>
+            {!(currentScene?.environment_id || currentScene?.environment?.id) ? (
+              <Text type="secondary" style={{ fontSize: 11 }}>当前场景未关联环境资产</Text>
+            ) : sceneEnvImages.length === 0 ? (
+              <Empty
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                description={<Text type="secondary" style={{ fontSize: 12 }}>该场景暂无可用图片</Text>}
+                style={{ margin: '4px 0' }}
+              />
+            ) : (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6 }}>
+                {sceneEnvImages.map((img) => {
+                  const isLocked = img.id === lockedEnvImageId;
+                  return (
                     <div
+                      key={img.id}
+                      onClick={() => handleToggleEnvImage(img.id)}
                       style={{
-                        position: 'absolute',
-                        top: 2,
-                        right: 2,
-                        background: 'rgba(82, 196, 26, 0.9)',
-                        borderRadius: 4,
-                        padding: '1px 4px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 2,
+                        position: 'relative',
+                        borderRadius: 6,
+                        overflow: 'hidden',
+                        border: isLocked ? '2px solid #52c41a' : '2px solid #2a2a2a',
+                        cursor: 'pointer',
                       }}
                     >
-                      <CheckCircleFilled style={{ fontSize: 10, color: '#fff' }} />
+                      <Image
+                        src={img.image_url}
+                        alt={img.view_type ?? 'scene'}
+                        preview={false}
+                        style={{ width: '100%', aspectRatio: '16/9', objectFit: 'cover' }}
+                      />
+                      {isLocked && (
+                        <div
+                          style={{
+                            position: 'absolute',
+                            top: 2,
+                            right: 2,
+                            background: 'rgba(82, 196, 26, 0.9)',
+                            borderRadius: 4,
+                            padding: '1px 4px',
+                          }}
+                        >
+                          <CheckCircleFilled style={{ fontSize: 10, color: '#fff' }} />
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
-              );
-            })}
+                  );
+                })}
+              </div>
+            )}
           </div>
-        )}
+        </div>
+
+        {/* ─────────── 左下：图片提示词 + 候选图 + 生成按钮 ─────────── */}
+        <div style={quadrantStyle}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+            <PictureOutlined style={{ color: '#a855f7' }} />
+            <Text strong style={{ color: '#fff' }}>图片生成</Text>
+            {imagePromptPreview?.is_custom && (
+              <Tag color="orange" style={{ fontSize: 10 }}>自定义中</Tag>
+            )}
+          </div>
+
+          {/* 提示词面板 */}
+          {renderPromptPanel({
+            type: 'image',
+            preview: imagePromptPreview,
+            loading: loadingImagePrompt,
+            modules: imageModules,
+            customPrompt: customImagePrompt,
+            onToggleModule: (key, value) => handleToggleModule('image', key, value),
+            onCustomChange: setCustomImagePrompt,
+            onRefresh: () => {
+              handleResetCustomPrompt('image');
+              fetchPrompt('image');
+            },
+          })}
+
+          <Divider style={{ borderColor: '#1e1e1e', margin: '10px 0' }} />
+
+          {/* 参数控制：比例、分辨率、模型 + 生成按钮 */}
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: '1fr 1fr',
+              gap: 8,
+              marginBottom: 10,
+            }}
+          >
+            <div>
+              <Text style={{ color: '#aaa', fontSize: 11, display: 'block', marginBottom: 4 }}>比例</Text>
+              <Select
+                size="small"
+                style={{ width: '100%' }}
+                value={imageGenParams.ratio}
+                onChange={(value) => setImageGenParams((prev) => ({ ...prev, ratio: value }))}
+                options={RATIO_OPTIONS}
+              />
+            </div>
+            <div>
+              <Text style={{ color: '#aaa', fontSize: 11, display: 'block', marginBottom: 4 }}>分辨率</Text>
+              <Select
+                size="small"
+                style={{ width: '100%' }}
+                value={imageGenParams.resolution}
+                onChange={(value) => setImageGenParams((prev) => ({ ...prev, resolution: value }))}
+                options={IMAGE_RESOLUTION_OPTIONS}
+              />
+            </div>
+            <div style={{ gridColumn: '1 / 3' }}>
+              <Text style={{ color: '#aaa', fontSize: 11, display: 'block', marginBottom: 4 }}>模型（不选用默认）</Text>
+              <Select
+                size="small"
+                style={{ width: '100%' }}
+                allowClear
+                placeholder="使用默认图像模型"
+                value={imageModelId}
+                onChange={(value) => setImageModelId(value)}
+                options={imageModels.map((m) => ({
+                  value: m.id,
+                  label: m.is_default ? `${m.name ?? m.id}（默认）` : (m.name ?? m.id),
+                }))}
+              />
+            </div>
+          </div>
+          <Button
+            type="primary"
+            block
+            icon={<PictureOutlined />}
+            loading={submittingImage}
+            onClick={handleGenerateImage}
+            style={{ marginBottom: 12 }}
+          >
+            生成图片
+          </Button>
+
+          {/* 候选图展示 */}
+          <Text style={{ color: '#aaa', fontSize: 12, display: 'block', marginBottom: 6 }}>
+            候选图片（{shot.images.length}）
+          </Text>
+          <ImageSelector
+            images={shot.images}
+            lockedImageId={shot.locked_image_id}
+            onLock={handleLockImage}
+          />
+        </div>
+
+        {/* ─────────── 右下：视频提示词 + 候选视频 + 生成按钮 ─────────── */}
+        <div style={quadrantStyle}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+            <VideoCameraOutlined style={{ color: '#22d3ee' }} />
+            <Text strong style={{ color: '#fff' }}>视频生成</Text>
+            {videoPromptPreview?.is_custom && (
+              <Tag color="orange" style={{ fontSize: 10 }}>自定义中</Tag>
+            )}
+          </div>
+
+          {/* 提示词面板 */}
+          {renderPromptPanel({
+            type: 'video',
+            preview: videoPromptPreview,
+            loading: loadingVideoPrompt,
+            modules: videoModules,
+            customPrompt: customVideoPrompt,
+            onToggleModule: (key, value) => handleToggleModule('video', key, value),
+            onCustomChange: setCustomVideoPrompt,
+            onRefresh: () => {
+              handleResetCustomPrompt('video');
+              fetchPrompt('video');
+            },
+          })}
+
+          <Divider style={{ borderColor: '#1e1e1e', margin: '10px 0' }} />
+
+          {/* 参数控制：比例、分辨率、时长、水印、模型 + 生成按钮 */}
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: '1fr 1fr',
+              gap: 8,
+              marginBottom: 10,
+            }}
+          >
+            <div>
+              <Text style={{ color: '#aaa', fontSize: 11, display: 'block', marginBottom: 4 }}>比例</Text>
+              <Select
+                size="small"
+                style={{ width: '100%' }}
+                value={videoGenParams.ratio}
+                onChange={(value) => setVideoGenParams((prev) => ({ ...prev, ratio: value }))}
+                options={RATIO_OPTIONS}
+              />
+            </div>
+            <div>
+              <Text style={{ color: '#aaa', fontSize: 11, display: 'block', marginBottom: 4 }}>分辨率</Text>
+              <Select
+                size="small"
+                style={{ width: '100%' }}
+                value={videoGenParams.resolution}
+                onChange={(value) => setVideoGenParams((prev) => ({ ...prev, resolution: value }))}
+                options={VIDEO_RESOLUTION_OPTIONS}
+              />
+            </div>
+            <div>
+              <Text style={{ color: '#aaa', fontSize: 11, display: 'block', marginBottom: 4 }}>时长（秒）</Text>
+              <InputNumber
+                size="small"
+                min={3}
+                max={10}
+                step={1}
+                style={{ width: '100%' }}
+                value={videoGenParams.duration}
+                onChange={(value) =>
+                  setVideoGenParams((prev) => ({
+                    ...prev,
+                    duration: typeof value === 'number' ? value : 5,
+                  }))
+                }
+              />
+            </div>
+            <div>
+              <Text style={{ color: '#aaa', fontSize: 11, display: 'block', marginBottom: 4 }}>水印</Text>
+              <div
+                style={{
+                  height: 24,
+                  display: 'flex',
+                  alignItems: 'center',
+                }}
+              >
+                <Switch
+                  size="small"
+                  checked={!!videoGenParams.watermark}
+                  onChange={(value) => setVideoGenParams((prev) => ({ ...prev, watermark: value }))}
+                />
+                <Text style={{ color: '#888', fontSize: 11, marginLeft: 8 }}>
+                  {videoGenParams.watermark ? '带水印' : '无水印'}
+                </Text>
+              </div>
+            </div>
+            <div style={{ gridColumn: '1 / 3' }}>
+              <Text style={{ color: '#aaa', fontSize: 11, display: 'block', marginBottom: 4 }}>模型（不选用默认）</Text>
+              <Select
+                size="small"
+                style={{ width: '100%' }}
+                allowClear
+                placeholder="使用默认视频模型"
+                value={videoModelId}
+                onChange={(value) => setVideoModelId(value)}
+                options={videoModels.map((m) => ({
+                  value: m.id,
+                  label: m.is_default ? `${m.name ?? m.id}（默认）` : (m.name ?? m.id),
+                }))}
+              />
+            </div>
+          </div>
+          <Button
+            type="primary"
+            block
+            icon={<VideoCameraOutlined />}
+            loading={submittingVideo}
+            disabled={!shot.locked_image_id}
+            onClick={handleGenerateVideo}
+            style={{ marginBottom: 12 }}
+          >
+            {shot.locked_image_id ? '生成视频' : '请先锁定一张候选图'}
+          </Button>
+
+          {/* 候选视频展示 */}
+          <Text style={{ color: '#aaa', fontSize: 12, display: 'block', marginBottom: 6 }}>
+            候选视频（{shot.videos?.length ?? 0}）
+          </Text>
+          <VideoSelector
+            videos={shot.videos ?? []}
+            lockedVideoId={shot.locked_video_id}
+            onLock={handleLockVideo}
+          />
+        </div>
       </div>
-
-      <Divider style={{ borderColor: '#1e1e1e' }} />
-
-      {/* Image Selector */}
-      <div style={{ marginBottom: 16 }}>
-        <Text strong style={{ color: '#fff', display: 'block', marginBottom: 8 }}>
-          候选图片（{shot.images.length}）
-        </Text>
-        <ImageSelector
-          images={shot.images}
-          lockedImageId={shot.locked_image_id}
-          onLock={handleLockImage}
-        />
-      </div>
-
-      <Divider style={{ borderColor: '#1e1e1e' }} />
-
-      {/* Video Selector */}
-      <div style={{ marginBottom: 16 }}>
-        <Text strong style={{ color: '#fff', display: 'block', marginBottom: 8 }}>
-          候选视频（{shot.videos?.length ?? 0}）
-        </Text>
-        <VideoSelector
-          videos={shot.videos ?? []}
-          lockedVideoId={shot.locked_video_id}
-          onLock={handleLockVideo}
-        />
-      </div>
-
-      <Divider style={{ borderColor: '#1e1e1e' }} />
-
-      {/* Prompt Preview：图片提示词 + 视频提示词 两个 Collapse 面板，默认都展开 */}
-      <Collapse
-        defaultActiveKey={['image', 'video']}
-        ghost
-        items={[
-          {
-            key: 'image',
-            label: (
-              <Space>
-                <EyeOutlined style={{ color: '#a855f7' }} />
-                <Text strong style={{ color: '#fff' }}>图片提示词</Text>
-                {imagePromptPreview?.is_custom && (
-                  <Tag color="orange" style={{ fontSize: 10 }}>自定义中</Tag>
-                )}
-              </Space>
-            ),
-            children: renderPromptPanel({
-              type: 'image',
-              preview: imagePromptPreview,
-              loading: loadingImagePrompt,
-              modules: imageModules,
-              customPrompt: customImagePrompt,
-              onToggleModule: (key, value) => handleToggleModule('image', key, value),
-              onCustomChange: setCustomImagePrompt,
-              onRefresh: () => {
-                handleResetCustomPrompt('image');
-                fetchPrompt('image');
-              },
-            }),
-          },
-          {
-            key: 'video',
-            label: (
-              <Space>
-                <EyeOutlined style={{ color: '#22d3ee' }} />
-                <Text strong style={{ color: '#fff' }}>视频提示词</Text>
-                {videoPromptPreview?.is_custom && (
-                  <Tag color="orange" style={{ fontSize: 10 }}>自定义中</Tag>
-                )}
-              </Space>
-            ),
-            children: renderPromptPanel({
-              type: 'video',
-              preview: videoPromptPreview,
-              loading: loadingVideoPrompt,
-              modules: videoModules,
-              customPrompt: customVideoPrompt,
-              onToggleModule: (key, value) => handleToggleModule('video', key, value),
-              onCustomChange: setCustomVideoPrompt,
-              onRefresh: () => {
-                handleResetCustomPrompt('video');
-                fetchPrompt('video');
-              },
-            }),
-          },
-        ]}
-      />
     </Drawer>
   );
 }
@@ -671,8 +1077,11 @@ function renderPromptPanel(props: PromptPanelProps) {
         style={{ background: '#0a0a0a', color: '#ccc', fontSize: 12, marginBottom: 8 }}
       />
 
-      {/* 操作行：刷新按钮 */}
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 10 }}>
+      {/* 操作行：手动刷新（兜底，正常情况下变更会自动同步） */}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+        <Text type="secondary" style={{ fontSize: 11 }}>
+          预览实时同步
+        </Text>
         <Button
           type="link"
           size="small"
@@ -680,7 +1089,7 @@ function renderPromptPanel(props: PromptPanelProps) {
           loading={loading}
           onClick={onRefresh}
         >
-          {isCustom ? '清空自定义并刷新' : '刷新预览'}
+          {isCustom ? '清空自定义' : '手动刷新'}
         </Button>
       </div>
 
@@ -688,7 +1097,7 @@ function renderPromptPanel(props: PromptPanelProps) {
       {preview ? (
         <div style={{ background: '#141414', borderRadius: 6, padding: 12, border: '1px solid #1e1e1e' }}>
           <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 6 }}>
-            最终提示词预览（保存后生效）：
+            最终提示词预览：
           </Text>
           <Paragraph style={{ color: '#ccc', fontSize: 12, marginBottom: 12, whiteSpace: 'pre-wrap' }}>
             {isCustom ? customPrompt : (preview.prompt || '（无内容）')}
@@ -708,7 +1117,7 @@ function renderPromptPanel(props: PromptPanelProps) {
           )}
         </div>
       ) : (
-        <Text type="secondary" style={{ fontSize: 12 }}>保存镜头信息后可查看生成提示词预览</Text>
+        <Text type="secondary" style={{ fontSize: 12 }}>编辑镜头信息后将自动展示提示词预览</Text>
       )}
     </div>
   );

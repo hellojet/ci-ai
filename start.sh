@@ -426,6 +426,11 @@ start_services() {
   echo ""
 
   info "启动后端服务 (FastAPI on :$BACKEND_PORT)..."
+  # 友好提示：后端启动时会做一次轻量自动迁移（建表 + 跨方言补列），
+  # 老库会被自动添加 ORM 中新增的字段（如 generation_tasks.params 等）。
+  # 失败的列会在日志里给出可手动执行的 SQL，不会阻塞服务启动。
+  info "  · 启动时将自动检测并补齐缺失的列（详见 $LOG_DIR/backend.log 中 'Auto-migrate' 行）"
+
   cd "$PROJECT_ROOT/backend"
   # 确保使用虚拟环境中的 Python
   source "$PROJECT_ROOT/backend/.venv/bin/activate"
@@ -441,11 +446,28 @@ start_services() {
     retries=$((retries + 1))
     if [ $retries -gt 15 ]; then
       error "后端启动超时，请检查 $LOG_DIR/backend.log"
+      # 失败时把 backend.log 末尾 50 行打出来，方便用户第一时间看到 Auto-migrate 失败建议的手动 SQL
+      if [ -f "$LOG_DIR/backend.log" ]; then
+        echo ""
+        warn "===== backend.log 末尾 50 行 ====="
+        tail -n 50 "$LOG_DIR/backend.log" | cat
+        warn "==================================="
+      fi
       exit 1
     fi
     sleep 1
   done
   success "后端服务已启动 (PID: $backend_pid)"
+
+  # 启动成功后，扫一眼日志里是否有自动补列动作，给用户一个清晰反馈
+  if [ -f "$LOG_DIR/backend.log" ] && grep -q "Auto-migrate: 已为旧库补齐" "$LOG_DIR/backend.log"; then
+    local migrate_summary
+    migrate_summary=$(grep "Auto-migrate: 已为旧库补齐" "$LOG_DIR/backend.log" | tail -n 1)
+    warn "检测到自动列迁移：$migrate_summary"
+  fi
+  if [ -f "$LOG_DIR/backend.log" ] && grep -q "Auto-migrate FAILED" "$LOG_DIR/backend.log"; then
+    warn "存在自动补列失败的项，请在 $LOG_DIR/backend.log 中搜索 'Auto-migrate FAILED' 并按提示手动执行 SQL"
+  fi
 
   echo ""
 

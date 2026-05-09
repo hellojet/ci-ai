@@ -71,6 +71,44 @@ def _is_rate_limited(status_code: int, body_text: str) -> bool:
     return False
 
 
+# 比例 + 分辨率 → "WxH" 像素字符串。
+# 万相 i2v 在 parameters.size 接受像素字符串（如 "1280*720" / "720*1280"），不接受 "9:16" 字面量。
+# 这里给 (ratio, resolution) 做一次像素级的映射；命中不到时返回 None，由调用方决定是否透传。
+_RESOLUTION_LONG_EDGE = {
+    "480p": 854,
+    "720p": 1280,
+    "1080p": 1920,
+    "2k": 2560,
+}
+
+
+def _resolve_video_size(ratio: str | None, resolution: str | None) -> str | None:
+    """根据 (ratio, resolution) 计算 "WxH" 字符串。
+
+    - 不传任何参数 → None（让上游用模型默认尺寸）
+    - 只传 ratio  → 用 720p 作为默认长边
+    - 命中不到的比例 → None（防止误传到上游被拒）
+    """
+    if not ratio and not resolution:
+        return None
+    long_edge = _RESOLUTION_LONG_EDGE.get((resolution or "720p").lower(), 1280)
+    ratio = ratio or "9:16"
+    try:
+        a, b = ratio.split(":")
+        ax, by = int(a), int(b)
+    except (ValueError, AttributeError):
+        return None
+    # 长边吃 long_edge，短边按比例换算
+    if ax >= by:
+        width = long_edge
+        height = int(round(long_edge * by / ax))
+    else:
+        height = long_edge
+        width = int(round(long_edge * ax / by))
+    # 万相 i2v 用 "*" 作为分隔符（用户提供的契约样例如 "1280*720"）
+    return f"{width}*{height}"
+
+
 def _derive_query_endpoint(submit_endpoint: str) -> str:
     """从 submit endpoint 推导出 task 查询 endpoint。
 
@@ -96,8 +134,18 @@ async def _submit_task(
     image_url: str,
     prompt: str,
     duration: int,
+    ratio: str | None = None,
+    resolution: str | None = None,
+    watermark: bool = False,
 ) -> str:
-    """提交视频生成任务，返回 task_id。内部处理限流重试。"""
+    """提交视频生成任务，返回 task_id。内部处理限流重试。
+
+    extra parameters 字段说明（按用户在前端选择透传到上游 dashscope 万相 i2v）：
+    - ratio: 视频长宽比，如 "9:16" / "16:9" / "1:1"。上游用 "size" 字段表示，
+      映射到 (width, height) 像素值，会与 resolution 一起决定。
+    - resolution: 目标视频清晰度档位（"720p" / "1080p" / "2k"）。
+    - watermark: 是否给输出视频加水印（默认 False）。
+    """
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
@@ -122,6 +170,18 @@ async def _submit_task(
             ),
         )
 
+    # 组装 parameters：duration + 可选的 size/resolution/watermark
+    parameters: dict = {"duration": duration}
+    size_value = _resolve_video_size(ratio, resolution)
+    if size_value:
+        parameters["size"] = size_value
+    if resolution:
+        # 上游 wan2.7-i2v 也接受独立的 resolution 字段（"480P" / "720P" / "1080P"）
+        # 与 size 同时传时，上游优先按 size。我们两个都带上，最大化兼容性。
+        parameters["resolution"] = resolution.upper()
+    # 默认不加水印；前端勾选时传 True
+    parameters["watermark"] = bool(watermark)
+
     payload = {
         "model": model,
         "input": {
@@ -130,9 +190,7 @@ async def _submit_task(
                 {"type": "first_frame", "url": image_url},
             ],
         },
-        "parameters": {
-            "duration": duration,
-        },
+        "parameters": parameters,
     }
 
     attempt = 0
@@ -267,6 +325,9 @@ async def generate(
     image_url: str,
     prompt: str = "",
     duration: int = 5,
+    ratio: str | None = None,
+    resolution: str | None = None,
+    watermark: bool = False,
 ) -> str:
     """调用视频生成 API（图生视频，异步任务模式）。
 
@@ -277,6 +338,9 @@ async def generate(
         image_url: 输入图片 URL（必须是网关可访问的 URL）
         prompt: 文本提示词
         duration: 视频时长（秒），默认 5
+        ratio: 视频长宽比（如 "9:16"），可选；与 resolution 一起决定输出像素尺寸
+        resolution: 目标分辨率档位（如 "1080p"），可选
+        watermark: 是否在输出视频上添加水印（默认 False）
 
     Returns:
         视频 URL（网关返回的 CDN 地址）
@@ -299,6 +363,9 @@ async def generate(
             image_url=image_url,
             prompt=prompt,
             duration=duration,
+            ratio=ratio,
+            resolution=resolution,
+            watermark=watermark,
         )
         return await _poll_task(
             client=client,

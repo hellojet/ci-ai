@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 from app.tasks.celery_app import celery_app
 
@@ -10,8 +10,29 @@ logger = logging.getLogger(__name__)
 
 CREDITS_MAP = {"image": 2, "video": 10, "audio": 5}
 
+# 用户在 ShotEditor 没有显式选择参数时使用的默认值。
+# 与前端 ShotEditor 的默认值保持一致，避免出现"前端 UI 是 1080p、实际请求是 720p"的漂移。
+DEFAULT_IMAGE_PARAMS = {"ratio": "9:16", "resolution": "1080p"}
+DEFAULT_VIDEO_PARAMS = {
+    "ratio": "9:16",
+    "resolution": "1080p",
+    "duration": 5,
+    "watermark": False,
+}
 
-CREDITS_MAP = {"image": 2, "video": 10, "audio": 5}
+
+def _merge_params(defaults: dict[str, Any], task_params: dict[str, Any] | None) -> dict[str, Any]:
+    """把任务上的 params 合并到默认值之上。
+
+    - task_params 为 None / 非 dict → 直接返回 defaults 副本
+    - 仅覆盖 defaults 里已有的 key（防止脏字段）
+    """
+    merged = dict(defaults)
+    if isinstance(task_params, dict):
+        for key, value in task_params.items():
+            if key in defaults and value not in (None, ""):
+                merged[key] = value
+    return merged
 
 
 def _build_prompt_for_shot(session, shot, prompt_type: str = "image") -> str:
@@ -235,9 +256,16 @@ def generate_image_task(self, task_id: int):
 
         from app.ai import image_adapter
 
+        # 读取用户在 ShotEditor 选择的图片生成参数（ratio/resolution），缺省走默认 9:16/1080p
+        image_params = _merge_params(DEFAULT_IMAGE_PARAMS, task.params)
+        img_ratio = image_params.get("ratio")
+        img_resolution = image_params.get("resolution")
+        img_width, img_height = image_adapter.resolve_image_size(img_ratio, img_resolution)
+
         try:
             if protocol == "chat_completions_modalities":
-                # Gemini 系列：multimodal content 原生支持多图
+                # Gemini 系列：multimodal content 原生支持多图，
+                # 通过 extendParams.imageConfig 传入画面比例和分辨率。
                 image_urls = image_adapter.generate_sync_via_chat(
                     endpoint=endpoint,
                     api_key=api_key,
@@ -245,6 +273,8 @@ def generate_image_task(self, task_id: int):
                     prompt=shot.generated_prompt,
                     count=1,
                     reference_image_urls=reference_urls,
+                    ratio=img_ratio,
+                    resolution=img_resolution,
                 )
             else:
                 # images_generations（gpt-image-2）：实测 payload.image 支持数组多图，全部透传
@@ -252,6 +282,8 @@ def generate_image_task(self, task_id: int):
                     endpoint=endpoint,
                     api_key=api_key,
                     prompt=shot.generated_prompt,
+                    width=img_width,
+                    height=img_height,
                     count=1,
                     reference_image_urls=reference_urls,
                 )
@@ -351,6 +383,10 @@ def generate_video_task(self, task_id: int):
         # 视频生成用独立的 video 提示词（独立的 modules 开关 / custom_prompt）
         video_prompt = _build_prompt_for_shot(session, shot, prompt_type="video")
 
+        # 读取用户在 ShotEditor 选择的视频生成参数（ratio/resolution/duration/watermark）
+        # 缺省走默认 9:16 / 1080p / 5s / 无水印（与前端默认值保持一致）
+        video_params = _merge_params(DEFAULT_VIDEO_PARAMS, task.params)
+
         try:
             video_url = asyncio.run(
                 video_adapter.generate(
@@ -359,6 +395,10 @@ def generate_video_task(self, task_id: int):
                     model=video_model,
                     image_url=absolute_image_url,
                     prompt=video_prompt or shot.generated_prompt or "",
+                    duration=int(video_params.get("duration") or 5),
+                    ratio=video_params.get("ratio"),
+                    resolution=video_params.get("resolution"),
+                    watermark=bool(video_params.get("watermark") or False),
                 )
             )
         except Exception as exc:
@@ -531,6 +571,8 @@ def _call_image_api_by_model_key(
     prompt: str,
     reference_image_url: Optional[str],
     count: int = 1,
+    ratio: Optional[str] = None,
+    resolution: Optional[str] = None,
 ) -> tuple[list[str], str, str]:
     """按 model_key 查清单并调用对应协议的图像 API。
 
@@ -539,6 +581,7 @@ def _call_image_api_by_model_key(
 
     - 优先用 model_key 对应的 AI_IMAGE_MODELS 条目（含 endpoint/api_key/protocol）
     - 找不到清单时回落到 .env 的 AI_IMAGE_ENDPOINT/API_KEY，按 images_generations 协议调
+    - ratio/resolution 仅在 chat_completions_modalities 协议下通过 extendParams 传给上游
     - 调用方需负责捕获异常并转成领域错误
     """
     from app.ai import image_adapter
@@ -568,6 +611,8 @@ def _call_image_api_by_model_key(
             prompt=prompt,
             count=count,
             reference_image_url=reference_image_url,
+            ratio=ratio,
+            resolution=resolution,
         )
     else:
         image_urls = image_adapter.generate_sync(

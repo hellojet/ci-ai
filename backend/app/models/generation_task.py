@@ -1,4 +1,4 @@
-from sqlalchemy import Integer, String, Text, DateTime, ForeignKey, func
+from sqlalchemy import Integer, String, Text, DateTime, ForeignKey, JSON, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -23,6 +23,10 @@ class GenerationTask(Base):
     # 用户在前端选择的模型 id（仅 task_type=image 会写入；其它类型保持 null）
     # 由 image_models_service 读取 .env AI_IMAGE_MODELS 匹配出完整 endpoint/api_key/protocol
     model_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # 生成参数（JSON）：图片任务 = {ratio, resolution}；视频任务 = {ratio, resolution, duration, watermark}
+    # nullable，老任务/未传参时由 worker 侧用默认值兜底（图片 9:16/1080p；视频 9:16/1080p/5s/无水印）
+    # 用 SQLAlchemy JSON 列：SQLite 下落为 TEXT，Postgres 下落为 jsonb，无需 alembic 迁移
+    params: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_by: Mapped[int] = mapped_column(
         Integer, ForeignKey("users.id"), nullable=False
     )

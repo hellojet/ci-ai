@@ -59,7 +59,7 @@ export default function VideoSelector({ videos, lockedVideoId, onLock }: VideoSe
                 el.pause();
                 el.currentTime = 0;
               }}
-              style={{ width: '100%', aspectRatio: '16 / 9', objectFit: 'cover', display: 'block' }}
+              style={{ width: '100%', objectFit: 'contain', display: 'block', background: '#000', borderRadius: 4 }}
             />
 
             {isLocked && (

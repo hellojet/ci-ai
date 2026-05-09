@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { GenerationTask, TaskType } from '@/types/generation';
+import type { GenerationTask, TaskType, ImageGenParams, VideoGenParams } from '@/types/generation';
 import type { ImageModel } from '@/types/imageModel';
 import type { VideoModel } from '@/types/videoModel';
 import * as generationApi from '@/api/generation';
@@ -22,8 +22,19 @@ interface GenerationState {
 
   fetchImageModels: () => Promise<ImageModel[]>;
   fetchVideoModels: () => Promise<VideoModel[]>;
-  generateForShot: (projectId: number, shotId: number, taskType: TaskType, modelId?: string) => Promise<void>;
-  generateAll: (projectId: number, taskType: TaskType, modelId?: string) => Promise<void>;
+  generateForShot: (
+    projectId: number,
+    shotId: number,
+    taskType: TaskType,
+    modelId?: string,
+    params?: ImageGenParams | VideoGenParams,
+  ) => Promise<void>;
+  generateAll: (
+    projectId: number,
+    taskType: TaskType,
+    modelId?: string,
+    params?: ImageGenParams | VideoGenParams,
+  ) => Promise<void>;
   retryTask: (projectId: number, taskId: number) => Promise<void>;
   fetchTasks: (projectId: number) => Promise<void>;
   fetchShotTasks: (projectId: number, shotId: number) => Promise<GenerationTask[]>;
@@ -65,12 +76,13 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
     }
   },
 
-  generateForShot: async (projectId, shotId, taskType, modelId) => {
+  generateForShot: async (projectId, shotId, taskType, modelId, params) => {
     set({ loading: true });
     try {
       const response = await generationApi.generateForShot(projectId, shotId, {
         task_type: taskType,
         ...(modelId ? { model_id: modelId } : {}),
+        ...(params ? { params } : {}),
       });
       set((state) => {
         const shotTasks = state.tasks[shotId] || [];
@@ -95,12 +107,13 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
     }
   },
 
-  generateAll: async (projectId, taskType, modelId) => {
+  generateAll: async (projectId, taskType, modelId, params) => {
     set({ loading: true });
     try {
       const response = await generationApi.generateAll(projectId, {
         task_type: taskType,
         ...(modelId ? { model_id: modelId } : {}),
+        ...(params ? { params } : {}),
       });
       set((state) => {
         const updatedTasks = { ...state.tasks };

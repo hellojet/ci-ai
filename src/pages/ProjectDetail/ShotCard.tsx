@@ -242,7 +242,7 @@ export default function ShotCard({ shot, projectId, onClick }: ShotCardProps) {
             style={{
               position: 'relative',
               width: '100%',
-              aspectRatio: '16 / 9',
+              height: 180,
               borderRadius: 6,
               background: '#0c0c0c',
               overflow: 'hidden',
@@ -268,19 +268,19 @@ export default function ShotCard({ shot, projectId, onClick }: ShotCardProps) {
                   el.pause();
                   el.currentTime = 0;
                 }}
-                style={{ width: '100%', height: '100%', objectFit: 'cover', background: '#000' }}
+                style={{ width: '100%', height: '100%', objectFit: 'contain', background: '#000' }}
               />
             ) : lockedImage ? (
               <img
                 src={lockedImage.image_url}
                 alt="shot"
-                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                style={{ width: '100%', height: '100%', objectFit: 'contain' }}
               />
             ) : shot.images.length > 0 ? (
               <img
                 src={shot.images[0].image_url}
                 alt="shot"
-                style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: 0.6 }}
+                style={{ width: '100%', height: '100%', objectFit: 'contain', opacity: 0.6 }}
               />
             ) : (
               <PictureOutlined style={{ color: '#444', fontSize: 28 }} />

@@ -1,5 +1,7 @@
 """生成任务服务层：创建任务、扣积分、派发 Celery 任务。"""
 
+from typing import Any
+
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,6 +13,47 @@ from app.models.user import User
 from app.services import image_models_service, video_models_service
 
 CREDITS_MAP = {"image": 2, "video": 10, "audio": 5}
+
+
+# 允许传入的参数白名单（按任务类型）。这里只做"白名单 + 类型清洗"，
+# 真正的合法值校验交给适配器（adapter 更清楚自己接受什么 ratio/分辨率）。
+_ALLOWED_IMAGE_PARAM_KEYS = {"ratio", "resolution"}
+_ALLOWED_VIDEO_PARAM_KEYS = {"ratio", "resolution", "duration", "watermark"}
+
+
+def _sanitize_params(task_type: str, params: dict[str, Any] | None) -> dict[str, Any] | None:
+    """按白名单清洗前端传入的 params，避免脏数据进库 / 透传到上游 API。
+
+    - audio：忽略
+    - image：仅保留 ratio / resolution（字符串）
+    - video：仅保留 ratio / resolution / duration / watermark（duration→int，watermark→bool）
+    - 任何字段值为空字符串 / None 都丢弃，避免覆盖 worker 的默认值
+    """
+    if not params or not isinstance(params, dict):
+        return None
+    if task_type == "image":
+        allowed = _ALLOWED_IMAGE_PARAM_KEYS
+    elif task_type == "video":
+        allowed = _ALLOWED_VIDEO_PARAM_KEYS
+    else:
+        return None
+
+    cleaned: dict[str, Any] = {}
+    for key, value in params.items():
+        if key not in allowed:
+            continue
+        if value is None or value == "":
+            continue
+        if key == "duration":
+            try:
+                cleaned[key] = int(value)
+            except (TypeError, ValueError):
+                continue
+        elif key == "watermark":
+            cleaned[key] = bool(value)
+        else:
+            cleaned[key] = str(value)
+    return cleaned or None
 
 
 def _resolve_model_key(task_type: str, model_id: str | None) -> str | None:
@@ -49,6 +92,7 @@ async def create_generation_task(
     task_type: str,
     user_id: int,
     model_id: str | None = None,
+    params: dict[str, Any] | None = None,
 ) -> GenerationTask:
     """创建生成任务，扣减积分并派发 Celery 异步任务。"""
     result = await db.execute(select(Shot).where(Shot.id == shot_id))
@@ -71,6 +115,7 @@ async def create_generation_task(
     user.credits -= credits_cost
 
     resolved_model_key = _resolve_model_key(task_type, model_id)
+    cleaned_params = _sanitize_params(task_type, params)
 
     task = GenerationTask(
         shot_id=shot_id,
@@ -79,6 +124,7 @@ async def create_generation_task(
         credits_cost=credits_cost,
         created_by=user_id,
         model_key=resolved_model_key,
+        params=cleaned_params,
     )
     db.add(task)
     await db.flush()
@@ -109,6 +155,7 @@ async def create_batch_generation_tasks(
     task_type: str,
     user_id: int,
     model_id: str | None = None,
+    params: dict[str, Any] | None = None,
 ) -> tuple[list[GenerationTask], list[dict], int]:
     """对项目下所有 shot 批量创建生成任务。
 
@@ -162,6 +209,7 @@ async def create_batch_generation_tasks(
 
     # 4) 解析模型 key（一次解析复用给所有任务，避免重复校验）
     resolved_model_key = _resolve_model_key(task_type, model_id)
+    cleaned_params = _sanitize_params(task_type, params)
 
     # 5) 批量建 GenerationTask
     tasks: list[GenerationTask] = []
@@ -173,6 +221,7 @@ async def create_batch_generation_tasks(
             credits_cost=per_credits,
             created_by=user_id,
             model_key=resolved_model_key,
+            params=cleaned_params,
         )
         db.add(task)
         tasks.append(task)

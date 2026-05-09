@@ -41,68 +41,144 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-async def _ensure_sqlite_columns(conn) -> None:
-    """轻量级的 "自动补列" 迁移：对于 SQLite 数据库，
-    对比 ORM 模型中定义的列与数据库中已有的列，补齐缺失的列。
+async def _fetch_existing_columns(conn, dialect: str, table_name: str) -> set[str]:
+    """读取指定表已存在的列名集合。不同方言走不同的元数据查询。
 
-    仅针对 SQLite，用于本地测试场景。生产环境应使用 alembic 迁移。
+    - sqlite   : PRAGMA table_info(<t>)
+    - postgres : information_schema.columns
+    - mysql    : information_schema.columns
+    其它方言一律返回空集合（即跳过自动补列，避免误操作）。
     """
     from sqlalchemy import text
 
-    dialect = conn.dialect.name
-    if dialect != "sqlite":
-        return
+    if dialect == "sqlite":
+        rows = await conn.execute(text(f"PRAGMA table_info({table_name})"))
+        return {row[1] for row in rows.fetchall()}
 
-    # 收集 SQLite 中每张已存在表的列
+    if dialect in ("postgresql", "postgres"):
+        rows = await conn.execute(
+            text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = :t AND table_schema = current_schema()"
+            ),
+            {"t": table_name},
+        )
+        return {row[0] for row in rows.fetchall()}
+
+    if dialect == "mysql":
+        rows = await conn.execute(
+            text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema = DATABASE() AND table_name = :t"
+            ),
+            {"t": table_name},
+        )
+        return {row[0] for row in rows.fetchall()}
+
+    return set()
+
+
+def _build_add_column_ddl(table_name: str, column, dialect_obj) -> str | None:
+    """根据 SQLAlchemy Column 反推一段 ALTER TABLE ADD COLUMN DDL。
+
+    返回 None 表示"无法安全推断"，调用方应跳过并提示用户手动迁移。
+
+    设计要点：
+    - JSON 列在 SQLite 上落 TEXT，避免 DDL 语法不兼容；其它方言保持原 JSON
+    - NOT NULL 列若没有 default，必须降级为 NULL（否则 SQLite 拒绝执行 ADD COLUMN）
+    - server_default 优先（DDL 字面量）；否则尝试 Python 端 default
+    """
+    dialect_name = dialect_obj.name
+
+    try:
+        col_type = column.type.compile(dialect=dialect_obj)
+    except Exception:
+        col_type = "TEXT"
+
+    # SQLite 没有 JSON 原生类型，SQLAlchemy 会编译成字面量 "JSON"
+    # 实测 SQLite 接受 JSON 类型字面量（按 TEXT 处理），但保险起见强制降级为 TEXT
+    if dialect_name == "sqlite" and col_type.upper() == "JSON":
+        col_type = "TEXT"
+
+    nullable = "NULL" if column.nullable else "NOT NULL"
+
+    default_clause = ""
+    server_default = getattr(column, "server_default", None)
+    if server_default is not None and getattr(server_default, "arg", None) is not None:
+        sd_arg = server_default.arg
+        sd_text = getattr(sd_arg, "text", None) or (sd_arg if isinstance(sd_arg, str) else None)
+        if sd_text is not None:
+            default_clause = f" DEFAULT {sd_text}"
+
+    if not default_clause and column.default is not None and getattr(column.default, "arg", None) is not None:
+        default_value = column.default.arg
+        if isinstance(default_value, bool):
+            # bool 是 int 子类，必须先判断
+            default_clause = f" DEFAULT {1 if default_value else 0}"
+        elif isinstance(default_value, (int, float)):
+            default_clause = f" DEFAULT {default_value}"
+        elif isinstance(default_value, str):
+            default_clause = f" DEFAULT '{default_value}'"
+
+    # NOT NULL 但没默认值：SQLite/MySQL 会拒绝 ADD COLUMN，统一降级为 NULL
+    if not column.nullable and not default_clause:
+        nullable = "NULL"
+
+    return (
+        f"ALTER TABLE {table_name} ADD COLUMN {column.name} {col_type} "
+        f"{nullable}{default_clause}"
+    ).strip()
+
+
+async def _ensure_missing_columns(conn) -> list[tuple[str, str]]:
+    """跨方言的"自动补列"轻量迁移。
+
+    遍历 ORM 元数据中的所有表，对比数据库实际列，缺失的就 ALTER TABLE ADD COLUMN。
+    支持 sqlite / postgres / mysql；其它方言静默跳过（生产请走 alembic）。
+
+    返回值：[(table_name, column_name), ...] 用于上层日志统计。
+    单条 DDL 失败不阻断整体启动，只在 warning 里留痕，并把失败建议手动 SQL 打到 error 日志。
+    """
+    from sqlalchemy import text
+
+    dialect_obj = conn.dialect
+    dialect_name = dialect_obj.name
+    if dialect_name not in ("sqlite", "postgresql", "postgres", "mysql"):
+        logger.info(
+            "Auto-migrate: dialect=%s 不支持自动补列，请使用 alembic 进行迁移。",
+            dialect_name,
+        )
+        return []
+
+    added: list[tuple[str, str]] = []
     for table in Base.metadata.sorted_tables:
         table_name = table.name
-        existing_cols_rows = await conn.execute(
-            text(f"PRAGMA table_info({table_name})")
-        )
-        existing_cols = {row[1] for row in existing_cols_rows.fetchall()}
+        existing_cols = await _fetch_existing_columns(conn, dialect_name, table_name)
         if not existing_cols:
-            # 表本身不存在，create_all 已处理
+            # 表本身不存在，create_all 已处理；跳过避免误执行 ALTER
             continue
 
         for column in table.columns:
             if column.name in existing_cols:
                 continue
-            # SQLite 对 JSON 列没有原生类型，SQLAlchemy 会编译成 "JSON"
-            # SQLite 实际按 TEXT 存储，这里显式退化一下，避免 DDL 语法报错
+            ddl = _build_add_column_ddl(table_name, column, dialect_obj)
+            if not ddl:
+                logger.warning(
+                    "Auto-migrate: 无法为 %s.%s 推断 DDL，请手动添加该列。",
+                    table_name, column.name,
+                )
+                continue
             try:
-                col_type = column.type.compile(dialect=conn.dialect)
-            except Exception:
-                col_type = "TEXT"
-            if col_type.upper() == "JSON":
-                col_type = "TEXT"
-            nullable = "NULL" if column.nullable else "NOT NULL"
-            default_clause = ""
-            # 优先用 server_default（DDL 级，字符串字面量）
-            server_default = getattr(column, "server_default", None)
-            if server_default is not None and getattr(server_default, "arg", None) is not None:
-                sd_arg = server_default.arg
-                sd_text = getattr(sd_arg, "text", None) or (sd_arg if isinstance(sd_arg, str) else None)
-                if sd_text is not None:
-                    default_clause = f" DEFAULT {sd_text}"
-            # 否则再看 Python 端 default
-            if not default_clause and column.default is not None and getattr(column.default, "arg", None) is not None:
-                default_value = column.default.arg
-                if isinstance(default_value, bool):
-                    # bool 必须先判断：bool 是 int 的子类，顺序反了会走错分支
-                    default_clause = f" DEFAULT {1 if default_value else 0}"
-                elif isinstance(default_value, (int, float)):
-                    default_clause = f" DEFAULT {default_value}"
-                elif isinstance(default_value, str):
-                    default_clause = f" DEFAULT '{default_value}'"
-            if not column.nullable and not default_clause:
-                # SQLite 在 ALTER TABLE ADD COLUMN NOT NULL 时必须有默认值
-                nullable = "NULL"
-            ddl = (
-                f"ALTER TABLE {table_name} ADD COLUMN {column.name} {col_type} "
-                f"{nullable}{default_clause}"
-            )
-            logger.warning("Auto-migrate: %s", ddl)
-            await conn.execute(text(ddl))
+                logger.warning("Auto-migrate: %s", ddl)
+                await conn.execute(text(ddl))
+                added.append((table_name, column.name))
+            except Exception as exc:  # noqa: BLE001
+                # 不阻塞启动，但留下清晰日志便于人工兜底
+                logger.error(
+                    "Auto-migrate FAILED for %s.%s (%s). 请手动执行：%s",
+                    table_name, column.name, exc, ddl,
+                )
+    return added
 
 
 async def _init_database_and_defaults() -> None:
@@ -122,9 +198,17 @@ async def _init_database_and_defaults() -> None:
     from app.services.settings_service import _ENV_DEFAULTS, _get_env_default
 
     # 1) 建表（幂等；alembic 环境下可省，但此处保证 SQLite 本地能跑起来）
+    #    顺带做一次跨方言的"自动补列"轻迁移，覆盖 sqlite / postgres / mysql，
+    #    避免老库新增列后必须手动 ALTER 的尴尬（如本次的 generation_tasks.params）。
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        await _ensure_sqlite_columns(conn)
+        added_columns = await _ensure_missing_columns(conn)
+    if added_columns:
+        logger.warning(
+            "Auto-migrate: 已为旧库补齐 %d 列：%s",
+            len(added_columns),
+            ", ".join(f"{t}.{c}" for t, c in added_columns),
+        )
     logger.info("Database schema ensured via Base.metadata.create_all + auto-migrate")
 
     async with async_session() as session:

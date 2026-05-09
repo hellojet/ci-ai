@@ -39,7 +39,7 @@ export default function ImageSelector({ images, lockedImageId, onLock }: ImageSe
             <Image
               src={image.image_url}
               alt="candidate"
-              style={{ width: '100%', aspectRatio: '16/9', objectFit: 'cover' }}
+              style={{ width: '100%', objectFit: 'contain', background: '#000', borderRadius: 4 }}
               preview={{ mask: 'Preview' }}
             />
 
