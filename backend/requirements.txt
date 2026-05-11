@@ -22,3 +22,5 @@ Pillow==10.4.0
 openai==1.47.0
 qiniu==7.14.0
 json_repair==0.30.3
+asyncpg
+psycopg2-binary
