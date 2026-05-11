@@ -9,7 +9,7 @@
 
 注意事项：
   - 脚本会先在目标数据库中建表（如果不存在），然后逐表迁移数据
-  - 迁移是幂等的：会先清空目标表再插入（TRUNCATE CASCADE）
+  - 迁移是幂等的：先一次性 TRUNCATE 所有目标表，再逐表插入，避免级联删除
   - 迁移完成后会自动修正 PostgreSQL 序列（auto-increment）的起始值
   - 支持 JSON 字段（SQLite 中存为 TEXT，PostgreSQL 中为 JSONB）
 """
@@ -195,12 +195,22 @@ def fix_sequences(postgres_conn):
     print("✅ 所有序列已修正")
 
 
+def truncate_all_tables(postgres_conn):
+    """一次性清空所有目标表，避免逐表 TRUNCATE CASCADE 导致级联删除已插入的数据。"""
+    pg_cursor = postgres_conn.cursor()
+    # 用一条 TRUNCATE 语句同时清空所有表，这样级联不会互相影响
+    all_tables = ", ".join(f'"{t}"' for t in TABLE_ORDER)
+    pg_cursor.execute(f"TRUNCATE TABLE {all_tables} CASCADE")
+    postgres_conn.commit()
+    print("  🗑️  已一次性清空所有目标表")
+
+
 def migrate_table(
     sqlite_conn: sqlite3.Connection,
     postgres_conn,
     table_name: str,
 ):
-    """迁移单张表的数据。"""
+    """迁移单张表的数据（仅插入，不再清空——清空由 truncate_all_tables 统一完成）。"""
     if not table_exists_in_sqlite(sqlite_conn, table_name):
         print(f"  ⏭️  表 {table_name} 在 SQLite 中不存在，跳过")
         return
@@ -218,11 +228,8 @@ def migrate_table(
     cursor = sqlite_conn.execute(f"SELECT * FROM {table_name}")
     rows = cursor.fetchall()
 
-    # 清空目标表
-    pg_cursor = postgres_conn.cursor()
-    pg_cursor.execute(f'TRUNCATE TABLE "{table_name}" CASCADE')
-
     # 批量插入（列名加引号避免保留字冲突）
+    pg_cursor = postgres_conn.cursor()
     col_names = ", ".join(f'"{col}"' for col in columns)
     placeholders = ", ".join(["%s"] * len(columns))
     insert_sql = f'INSERT INTO "{table_name}" ({col_names}) VALUES ({placeholders})'
@@ -288,6 +295,9 @@ def main():
     pg_cursor.execute("SET session_replication_role = 'replica';")
     postgres_conn.commit()
     print("  🔓 已暂时禁用外键约束")
+
+    # 一次性清空所有表，避免逐表 TRUNCATE CASCADE 导致级联删除已插入数据
+    truncate_all_tables(postgres_conn)
 
     for table_name in TABLE_ORDER:
         migrate_table(sqlite_conn, postgres_conn, table_name)
