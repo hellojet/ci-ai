@@ -18,20 +18,26 @@ logger = logging.getLogger(__name__)
 
 async def get_styles(
     db: AsyncSession,
+    creator_id: int,
     page: int = 1,
     page_size: int = 20,
 ) -> tuple[list[Style], int]:
-    query = select(Style).order_by(Style.id.desc())
+    query = select(Style).where(Style.creator_id == creator_id).order_by(Style.id.desc())
     return await paginate(db, query, page, page_size)
 
 
-async def get_style(db: AsyncSession, style_id: int) -> Style:
+async def get_style(db: AsyncSession, style_id: int, creator_id: int | None = None) -> Style:
     result = await db.execute(select(Style).where(Style.id == style_id))
     style = result.scalar_one_or_none()
     if style is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Style {style_id} not found",
+        )
+    if creator_id is not None and style.creator_id != creator_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No permission to access this style",
         )
     return style
 

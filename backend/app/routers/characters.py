@@ -22,7 +22,7 @@ async def list_characters(
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(get_current_user),
 ):
-    items, total = await character_service.get_characters(db, page, page_size, keyword)
+    items, total = await character_service.get_characters(db, _user.id, page, page_size, keyword)
     return ApiResponse(
         data=PaginatedData(
             total=total,
@@ -69,9 +69,9 @@ async def create_character(
 async def get_character(
     character_id: int,
     db: AsyncSession = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ):
-    character = await character_service.get_character(db, character_id)
+    character = await character_service.get_character(db, character_id, creator_id=user.id)
     return ApiResponse(data=CharacterOut.model_validate(character))
 
 
@@ -87,8 +87,11 @@ async def update_character(
     # 声音档案配置（JSON 字符串），包含 audio_url/audio_name/voice_name 等
     voice_config: Optional[str] = Form(None),
     db: AsyncSession = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ):
+    # 先校验归属
+    await character_service.get_character(db, character_id, creator_id=user.id)
+
     # UploadFile 分支（兼容旧前端，不推荐）：把文件再丢给 storage_service 存一次
     if seed_image and seed_image.filename:
         from app.services import storage_service
@@ -126,8 +129,9 @@ async def update_character(
 async def delete_character(
     character_id: int,
     db: AsyncSession = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ):
+    await character_service.get_character(db, character_id, creator_id=user.id)
     await character_service.delete_character(db, character_id)
     return ApiResponse(message="Character deleted successfully")
 

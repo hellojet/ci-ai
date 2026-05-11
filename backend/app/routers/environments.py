@@ -23,10 +23,10 @@ async def list_environments(
     page_size: int = Query(20, ge=1, le=100),
     keyword: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ):
     items, total = await environment_service.get_environments(
-        db, page, page_size, keyword
+        db, user.id, page, page_size, keyword
     )
     return ApiResponse(
         data=PaginatedData(
@@ -81,9 +81,9 @@ async def create_environment(
 async def get_environment(
     environment_id: int,
     db: AsyncSession = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ):
-    environment = await environment_service.get_environment(db, environment_id)
+    environment = await environment_service.get_environment(db, environment_id, creator_id=user.id)
     return ApiResponse(data=EnvironmentOut.model_validate(environment))
 
 
@@ -97,8 +97,11 @@ async def update_environment(
     seed_image: Optional[UploadFile] = File(None),
     seed_image_url: Optional[str] = Form(None),
     db: AsyncSession = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ):
+    # 先校验归属
+    await environment_service.get_environment(db, environment_id, creator_id=user.id)
+
     base_image_url: Optional[str] = None
     if base_image and base_image.filename:
         base_image_url = f"/uploads/environments/{base_image.filename}"
@@ -131,8 +134,9 @@ async def update_environment(
 async def delete_environment(
     environment_id: int,
     db: AsyncSession = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ):
+    await environment_service.get_environment(db, environment_id, creator_id=user.id)
     await environment_service.delete_environment(db, environment_id)
     return ApiResponse(message="Environment deleted successfully")
 

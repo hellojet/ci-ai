@@ -17,18 +17,23 @@ logger = logging.getLogger(__name__)
 
 async def get_environments(
     db: AsyncSession,
+    creator_id: int,
     page: int = 1,
     page_size: int = 20,
     keyword: Optional[str] = None,
 ) -> tuple[list[Environment], int]:
-    query = select(Environment).options(selectinload(Environment.images))
+    query = (
+        select(Environment)
+        .options(selectinload(Environment.images))
+        .where(Environment.creator_id == creator_id)
+    )
     if keyword:
         query = query.where(Environment.name.ilike(f"%{keyword}%"))
     query = query.order_by(Environment.id.desc())
     return await paginate(db, query, page, page_size)
 
 
-async def get_environment(db: AsyncSession, environment_id: int) -> Environment:
+async def get_environment(db: AsyncSession, environment_id: int, creator_id: int | None = None) -> Environment:
     result = await db.execute(
         select(Environment)
         .options(selectinload(Environment.images))
@@ -39,6 +44,11 @@ async def get_environment(db: AsyncSession, environment_id: int) -> Environment:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Environment {environment_id} not found",
+        )
+    if creator_id is not None and environment.creator_id != creator_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No permission to access this environment",
         )
     return environment
 

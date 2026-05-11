@@ -18,9 +18,9 @@ async def list_styles(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ):
-    items, total = await style_service.get_styles(db, page, page_size)
+    items, total = await style_service.get_styles(db, user.id, page, page_size)
     return ApiResponse(
         data=PaginatedData(
             total=total,
@@ -65,9 +65,9 @@ async def create_style(
 async def get_style(
     style_id: int,
     db: AsyncSession = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ):
-    style = await style_service.get_style(db, style_id)
+    style = await style_service.get_style(db, style_id, creator_id=user.id)
     return ApiResponse(data=StyleOut.model_validate(style))
 
 
@@ -79,8 +79,11 @@ async def update_style(
     reference_image: Optional[UploadFile] = File(None),
     reference_image_url: Optional[str] = Form(None),
     db: AsyncSession = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ):
+    # 先校验归属
+    await style_service.get_style(db, style_id, creator_id=user.id)
+
     if reference_image and reference_image.filename:
         from app.services import storage_service
         from app.config import get_settings
@@ -107,8 +110,9 @@ async def update_style(
 async def delete_style(
     style_id: int,
     db: AsyncSession = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ):
+    await style_service.get_style(db, style_id, creator_id=user.id)
     await style_service.delete_style(db, style_id)
     return ApiResponse(message="Style deleted successfully")
 

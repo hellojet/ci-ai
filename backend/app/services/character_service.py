@@ -18,18 +18,23 @@ MAX_VIEWS_PER_CHARACTER = 20
 
 async def get_characters(
     db: AsyncSession,
+    creator_id: int,
     page: int = 1,
     page_size: int = 20,
     keyword: Optional[str] = None,
 ) -> tuple[list[Character], int]:
-    query = select(Character).options(selectinload(Character.views))
+    query = (
+        select(Character)
+        .options(selectinload(Character.views))
+        .where(Character.creator_id == creator_id)
+    )
     if keyword:
         query = query.where(Character.name.ilike(f"%{keyword}%"))
     query = query.order_by(Character.id.desc())
     return await paginate(db, query, page, page_size)
 
 
-async def get_character(db: AsyncSession, character_id: int) -> Character:
+async def get_character(db: AsyncSession, character_id: int, creator_id: int | None = None) -> Character:
     result = await db.execute(
         select(Character)
         .options(selectinload(Character.views))
@@ -40,6 +45,11 @@ async def get_character(db: AsyncSession, character_id: int) -> Character:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Character {character_id} not found",
+        )
+    if creator_id is not None and character.creator_id != creator_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No permission to access this character",
         )
     return character
 
