@@ -83,6 +83,8 @@ async def update_character(
     seed_image: Optional[UploadFile] = File(None),
     # 允许前端把已上传到七牛/MinIO 的 URL 直接传回来，避免路由层再去落盘一次
     seed_image_url: Optional[str] = Form(None),
+    # 声音档案配置（JSON 字符串），包含 audio_url/audio_name/voice_name 等
+    voice_config: Optional[str] = Form(None),
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(get_current_user),
 ):
@@ -99,6 +101,17 @@ async def update_character(
             content_type=seed_image.content_type or "image/png",
         )
 
+    # 解析 voice_config JSON 字符串
+    import json
+
+    parsed_voice_config: Optional[dict] = None
+    if voice_config is not None:
+        try:
+            parsed_voice_config = json.loads(voice_config) if voice_config else {}
+        except json.JSONDecodeError:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=400, detail="voice_config must be valid JSON")
+
     character = await character_service.update_character(
         db,
         character_id,
@@ -106,6 +119,7 @@ async def update_character(
         description=description,
         visual_prompt=visual_prompt,
         seed_image_url=seed_image_url,
+        voice_config=parsed_voice_config,
     )
     return ApiResponse(data=CharacterOut.model_validate(character))
 

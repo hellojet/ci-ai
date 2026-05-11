@@ -247,6 +247,12 @@ const zh = {
     generateCharacterViews: '生成角色视图',
     visualPromptPlaceholder: '描述角色的视觉特征...',
     voiceProfile: '声音档案',
+    voiceSample: '语音样本',
+    uploadVoice: '上传音频',
+    replaceVoice: '替换音频',
+    voiceUploaded: '声音档案上传成功',
+    voiceDeleted: '声音档案已删除',
+    deleteVoiceConfirm: '确定删除此声音档案？',
     // 场景环境详情
     environmentDetails: '场景环境详情',
     environmentDescPlaceholder: '描述场景环境...',

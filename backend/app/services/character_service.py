@@ -72,6 +72,7 @@ async def update_character(
     description: Optional[str] = None,
     visual_prompt: Optional[str] = None,
     seed_image_url: Optional[str] = None,
+    voice_config: Optional[dict] = None,
 ) -> Character:
     character = await get_character(db, character_id)
     if name is not None:
@@ -82,6 +83,8 @@ async def update_character(
         character.visual_prompt = visual_prompt
     if seed_image_url is not None:
         character.seed_image_url = seed_image_url
+    if voice_config is not None:
+        character.voice_config = voice_config
     await db.commit()
     await db.refresh(character)
     return await get_character(db, character.id)

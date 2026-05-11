@@ -14,13 +14,25 @@ export interface CharacterView {
   created_at: string;
 }
 
+/** 声音档案配置 */
+export interface VoiceConfig {
+  /** 音频样本文件 URL */
+  audio_url?: string;
+  /** 音频文件名（展示用） */
+  audio_name?: string;
+  /** 声音名称/标签（如"温柔女声"） */
+  voice_name?: string;
+  /** 第三方 TTS 平台的 voice_id（可选） */
+  voice_id?: string;
+}
+
 export interface Character {
   id: number;
   name: string;
   description?: string;
   visual_prompt?: string;
   seed_image_url?: string;
-  voice_config?: Record<string, unknown>;
+  voice_config?: VoiceConfig | null;
   views?: CharacterView[];
   creator_id: number;
   created_at: string;
@@ -31,7 +43,7 @@ export interface CreateCharacterRequest {
   name: string;
   description?: string;
   visual_prompt?: string;
-  voice_config?: Record<string, unknown>;
+  voice_config?: VoiceConfig;
 }
 
 export interface GenerateViewsRequest {

@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router';
 import { Typography, Button, Form, Input, Spin, Row, Col, Card, Image, Popconfirm, Space, Modal, Select, InputNumber, Switch, Tooltip, message } from 'antd';
-import { ArrowLeftOutlined, DeleteOutlined, ReloadOutlined, PlusOutlined, LoadingOutlined, UploadOutlined, ExclamationCircleOutlined, LinkOutlined } from '@ant-design/icons';
+import { ArrowLeftOutlined, DeleteOutlined, ReloadOutlined, PlusOutlined, LoadingOutlined, UploadOutlined, ExclamationCircleOutlined, LinkOutlined, SoundOutlined, PlayCircleOutlined } from '@ant-design/icons';
 import * as characterApi from '@/api/characters';
 import { useLocale } from '@/hooks/useLocale';
 import FileUpload from '@/components/FileUpload';
-import type { Character } from '@/types/character';
+import type { Character, VoiceConfig } from '@/types/character';
+import { uploadFile } from '@/api/upload';
 import { VIEW_TYPES, MAX_CHARACTER_VIEWS } from '@/utils/constants';
 import { useGenerationStore } from '@/stores/generationStore';
 import { getModelDisplayName } from '@/types/imageModel';
@@ -245,9 +246,94 @@ export default function CharacterDetailPage() {
                 </FileUpload>
               </Form.Item>
               <Form.Item label={t('assets.voiceProfile')}>
-                <Text type="secondary" style={{ fontSize: 12 }}>
-                  {character.voice_config ? JSON.stringify(character.voice_config) : t('assets.notConfigured')}
-                </Text>
+                {character.voice_config?.audio_url ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#1e1e1e', borderRadius: 6, padding: '8px 12px' }}>
+                      <SoundOutlined style={{ color: '#52c41a', fontSize: 16 }} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <Text style={{ fontSize: 12, display: 'block' }} ellipsis>
+                          {character.voice_config.audio_name || t('assets.voiceSample')}
+                        </Text>
+                        {character.voice_config.voice_name && (
+                          <Text type="secondary" style={{ fontSize: 11 }}>{character.voice_config.voice_name}</Text>
+                        )}
+                      </div>
+                      <Popconfirm
+                        title={t('assets.deleteVoiceConfirm')}
+                        onConfirm={async () => {
+                          try {
+                            const fd = new FormData();
+                            fd.append('name', character.name);
+                            fd.append('voice_config', JSON.stringify({}));
+                            await characterApi.updateCharacter(characterId, fd);
+                            message.success(t('assets.voiceDeleted'));
+                            fetchCharacter();
+                          } catch (error) {
+                            message.error((error as Error).message || t('assets.saveFailed'));
+                          }
+                        }}
+                      >
+                        <Button size="small" type="text" danger icon={<DeleteOutlined />} />
+                      </Popconfirm>
+                    </div>
+                    <audio
+                      src={character.voice_config.audio_url}
+                      controls
+                      style={{ width: '100%', height: 32 }}
+                    />
+                    <FileUpload
+                      category="uploads"
+                      accept="audio/*"
+                      onSuccess={async (url) => {
+                        const input = document.createElement('input');
+                        input.style.display = 'none';
+                        const fileName = url.split('/').pop() || t('assets.voiceSample');
+                        const voiceConfig: VoiceConfig = {
+                          audio_url: url,
+                          audio_name: fileName,
+                          voice_name: character.voice_config?.voice_name || '',
+                        };
+                        try {
+                          const fd = new FormData();
+                          fd.append('name', character.name);
+                          fd.append('voice_config', JSON.stringify(voiceConfig));
+                          await characterApi.updateCharacter(characterId, fd);
+                          message.success(t('assets.voiceUploaded'));
+                          fetchCharacter();
+                        } catch (error) {
+                          message.error((error as Error).message || t('assets.saveFailed'));
+                        }
+                      }}
+                    >
+                      <Button size="small" icon={<UploadOutlined />}>{t('assets.replaceVoice')}</Button>
+                    </FileUpload>
+                  </div>
+                ) : (
+                  <FileUpload
+                    category="uploads"
+                    accept="audio/*"
+                    onSuccess={async (url) => {
+                      const fileName = url.split('/').pop() || t('assets.voiceSample');
+                      const voiceConfig: VoiceConfig = {
+                        audio_url: url,
+                        audio_name: fileName,
+                        voice_name: '',
+                      };
+                      try {
+                        const fd = new FormData();
+                        fd.append('name', character.name);
+                        fd.append('voice_config', JSON.stringify(voiceConfig));
+                        await characterApi.updateCharacter(characterId, fd);
+                        message.success(t('assets.voiceUploaded'));
+                        fetchCharacter();
+                      } catch (error) {
+                        message.error((error as Error).message || t('assets.saveFailed'));
+                      }
+                    }}
+                  >
+                    <Button icon={<UploadOutlined />}>{t('assets.uploadVoice')}</Button>
+                  </FileUpload>
+                )}
               </Form.Item>
               <Button type="primary" htmlType="submit" loading={saving}>{t('common.saveChanges')}</Button>
             </Form>
