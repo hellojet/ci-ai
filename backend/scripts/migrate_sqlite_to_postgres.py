@@ -74,6 +74,19 @@ def get_table_columns(sqlite_conn: sqlite3.Connection, table_name: str) -> list[
     return [row["name"] for row in cursor.fetchall()]
 
 
+def get_postgres_boolean_columns(postgres_conn, table_name: str) -> set[str]:
+    """获取 PostgreSQL 表中所有布尔类型的列名。"""
+    cursor = postgres_conn.cursor()
+    cursor.execute("""
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = %s
+          AND data_type = 'boolean'
+    """, (table_name,))
+    return {row[0] for row in cursor.fetchall()}
+
+
 def table_exists_in_sqlite(sqlite_conn: sqlite3.Connection, table_name: str) -> bool:
     """检查 SQLite 中是否存在指定表。"""
     cursor = sqlite_conn.execute(
@@ -198,6 +211,7 @@ def migrate_table(
         return
 
     columns = get_table_columns(sqlite_conn, table_name)
+    boolean_columns = get_postgres_boolean_columns(postgres_conn, table_name)
     print(f"  📦 迁移 {table_name}: {row_count} 行, {len(columns)} 列")
 
     # 从 SQLite 读取所有数据
@@ -222,8 +236,12 @@ def migrate_table(
             row_values = []
             for col in columns:
                 value = row[col]
+                # 布尔字段处理：SQLite 用 0/1，PostgreSQL 需要 True/False
+                if col in boolean_columns:
+                    if value is not None:
+                        value = bool(value)
                 # JSON 字段处理：SQLite 中存为 TEXT 字符串，PostgreSQL 需要传 dict/list
-                if isinstance(value, str) and value.startswith(("{", "[")):
+                elif isinstance(value, str) and value.startswith(("{", "[")):
                     try:
                         value = json.loads(value)
                         # psycopg2 需要用 Json 包装
