@@ -1,6 +1,7 @@
+import json
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -102,14 +103,11 @@ async def update_character(
         )
 
     # 解析 voice_config JSON 字符串
-    import json
-
     parsed_voice_config: Optional[dict] = None
     if voice_config is not None:
         try:
             parsed_voice_config = json.loads(voice_config) if voice_config else {}
         except json.JSONDecodeError:
-            from fastapi import HTTPException
             raise HTTPException(status_code=400, detail="voice_config must be valid JSON")
 
     character = await character_service.update_character(

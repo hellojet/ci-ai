@@ -285,8 +285,6 @@ export default function CharacterDetailPage() {
                       category="uploads"
                       accept="audio/*"
                       onSuccess={async (url) => {
-                        const input = document.createElement('input');
-                        input.style.display = 'none';
                         const fileName = url.split('/').pop() || t('assets.voiceSample');
                         const voiceConfig: VoiceConfig = {
                           audio_url: url,

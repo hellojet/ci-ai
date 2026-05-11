@@ -20,7 +20,7 @@ import sqlite3
 import sys
 
 import psycopg2
-from psycopg2.extras import execute_values
+import psycopg2.extras
 
 # 迁移表顺序（按外键依赖排列，父表在前，子表在后）
 TABLE_ORDER = [
@@ -122,25 +122,61 @@ def create_tables_in_postgres(postgres_conn):
 
 
 def fix_sequences(postgres_conn):
-    """修正 PostgreSQL 序列值，确保 auto-increment 从最大 ID + 1 开始。"""
+    """修正 PostgreSQL 序列值，确保 auto-increment 从最大 ID + 1 开始。
+
+    兼容两种序列类型：
+    - SERIAL 列：通过 pg_get_serial_sequence 获取
+    - IDENTITY 列：通过 pg_sequences + information_schema 获取
+    """
     cursor = postgres_conn.cursor()
-    # 查询所有使用 sequence 的列
+    fixed_count = 0
+
+    # 方式一：查询 SERIAL 列关联的序列
     cursor.execute("""
         SELECT t.relname AS table_name,
                a.attname AS column_name,
-               pg_get_serial_sequence(t.relname, a.attname) AS seq_name
+               pg_get_serial_sequence(t.relname::text, a.attname::text) AS seq_name
         FROM pg_class t
         JOIN pg_attribute a ON a.attrelid = t.oid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
         WHERE t.relkind = 'r'
-          AND pg_get_serial_sequence(t.relname, a.attname) IS NOT NULL
+          AND n.nspname = 'public'
+          AND a.attnum > 0
+          AND NOT a.attisdropped
+          AND pg_get_serial_sequence(t.relname::text, a.attname::text) IS NOT NULL
     """)
-    sequences = cursor.fetchall()
+    serial_sequences = cursor.fetchall()
 
-    for table_name, column_name, seq_name in sequences:
-        cursor.execute(f"SELECT COALESCE(MAX({column_name}), 0) + 1 FROM {table_name}")
+    for table_name, column_name, seq_name in serial_sequences:
+        cursor.execute(f'SELECT COALESCE(MAX("{column_name}"), 0) + 1 FROM "{table_name}"')
         next_val = cursor.fetchone()[0]
         cursor.execute(f"SELECT setval('{seq_name}', {next_val}, false)")
         print(f"  🔧 序列 {seq_name} → 下一个值 = {next_val}")
+        fixed_count += 1
+
+    # 方式二：查询 IDENTITY 列关联的序列（SQLAlchemy 2.x 在 PostgreSQL 上默认用 IDENTITY）
+    cursor.execute("""
+        SELECT c.table_name, c.column_name,
+               pg_get_serial_sequence(c.table_name, c.column_name) AS seq_name
+        FROM information_schema.columns c
+        WHERE c.table_schema = 'public'
+          AND c.is_identity = 'YES'
+          AND pg_get_serial_sequence(c.table_name, c.column_name) IS NOT NULL
+    """)
+    identity_sequences = cursor.fetchall()
+
+    for table_name, column_name, seq_name in identity_sequences:
+        # 避免重复处理（可能已经被方式一处理过）
+        if any(s[2] == seq_name for s in serial_sequences):
+            continue
+        cursor.execute(f'SELECT COALESCE(MAX("{column_name}"), 0) + 1 FROM "{table_name}"')
+        next_val = cursor.fetchone()[0]
+        cursor.execute(f"SELECT setval('{seq_name}', {next_val}, false)")
+        print(f"  🔧 序列 {seq_name} (identity) → 下一个值 = {next_val}")
+        fixed_count += 1
+
+    if fixed_count == 0:
+        print("  ⚠️  未找到需要修正的序列（可能表中无自增列或命名不匹配）")
 
     postgres_conn.commit()
     print("✅ 所有序列已修正")
@@ -170,12 +206,12 @@ def migrate_table(
 
     # 清空目标表
     pg_cursor = postgres_conn.cursor()
-    pg_cursor.execute(f"TRUNCATE TABLE {table_name} CASCADE")
+    pg_cursor.execute(f'TRUNCATE TABLE "{table_name}" CASCADE')
 
-    # 批量插入
-    col_names = ", ".join(columns)
+    # 批量插入（列名加引号避免保留字冲突）
+    col_names = ", ".join(f'"{col}"' for col in columns)
     placeholders = ", ".join(["%s"] * len(columns))
-    insert_sql = f"INSERT INTO {table_name} ({col_names}) VALUES ({placeholders})"
+    insert_sql = f'INSERT INTO "{table_name}" ({col_names}) VALUES ({placeholders})'
 
     batch_size = 500
     inserted = 0
