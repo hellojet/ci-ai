@@ -227,10 +227,21 @@ def main():
     create_tables_in_postgres(postgres_conn)
     print()
 
-    # 3. 逐表迁移数据
+    # 3. 逐表迁移数据（禁用外键约束，避免插入顺序问题）
     print("📋 步骤 2: 迁移数据...")
+    pg_cursor = postgres_conn.cursor()
+    # 禁用所有触发器（包括外键约束检查）
+    pg_cursor.execute("SET session_replication_role = 'replica';")
+    postgres_conn.commit()
+    print("  🔓 已暂时禁用外键约束")
+
     for table_name in TABLE_ORDER:
         migrate_table(sqlite_conn, postgres_conn, table_name)
+
+    # 恢复外键约束检查
+    pg_cursor.execute("SET session_replication_role = 'origin';")
+    postgres_conn.commit()
+    print("  🔒 已恢复外键约束")
     print()
 
     # 4. 修正序列
