@@ -85,6 +85,7 @@ def _load_raw_models() -> list[dict]:
                 "model": str(m.get("model") or mid),
                 "protocol": protocol,
                 "default": bool(m.get("default", False)),
+                "supports_audio": bool(m.get("supports_audio", False)),
             }
         )
 
@@ -104,6 +105,7 @@ def list_models_for_client() -> list[dict]:
             "display_name": m.get("display_name"),
             "protocol": m["protocol"],
             "default": m["default"],
+            "supports_audio": m.get("supports_audio", False),
         }
         for m in _load_raw_models()
     ]

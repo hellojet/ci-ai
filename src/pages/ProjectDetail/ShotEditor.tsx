@@ -60,7 +60,37 @@ interface ShotEditorProps {
   onClose: () => void;
 }
 
+// 响应式断点：Drawer 内容区宽度小于此值时切换为单列布局
+const COMPACT_BREAKPOINT = 720;
+
 export default function ShotEditor({ shot, projectId, open, onClose }: ShotEditorProps) {
+  // 检测 Drawer 内容区实际宽度，驱动响应式布局（而非窗口宽度）
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [containerWidth, setContainerWidth] = useState(0);
+  useEffect(() => {
+    const element = containerRef.current;
+    if (!element) return;
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setContainerWidth(entry.contentRect.width);
+      }
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+  // 同时监听窗口宽度，用于决定 Drawer 自身的宽度
+  const [windowWidth, setWindowWidth] = useState(() =>
+    typeof window !== 'undefined' ? window.innerWidth : 1024,
+  );
+  useEffect(() => {
+    const handleResize = () => setWindowWidth(window.innerWidth);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+  // isCompact: 基于 Drawer 内容区的实际宽度（非窗口宽度）
+  const isCompact = containerWidth > 0 ? containerWidth < COMPACT_BREAKPOINT : windowWidth < COMPACT_BREAKPOINT;
+  const isNarrowWindow = windowWidth <= 768;
+
   const { updateShot, currentProject, lockImage, lockVideo } = useProjectStore();
   const { characters, fetchCharacters } = useAssetStore();
   const {
@@ -89,6 +119,8 @@ export default function ShotEditor({ shot, projectId, open, onClose }: ShotEdito
   const [videoModelId, setVideoModelId] = useState<string | undefined>(undefined);
   const [submittingImage, setSubmittingImage] = useState(false);
   const [submittingVideo, setSubmittingVideo] = useState(false);
+  // 视频生成时选择的角色音频（角色 id → voice_config.audio_url）
+  const [selectedAudioCharacterId, setSelectedAudioCharacterId] = useState<number | undefined>(undefined);
 
   // 当前已选角色 id 列表（同步 form 字段 character_ids）
   const [selectedCharacterIds, setSelectedCharacterIds] = useState<number[]>([]);
@@ -218,8 +250,8 @@ export default function ShotEditor({ shot, projectId, open, onClose }: ShotEdito
    * 设计要点：
    * - 用 initializedRef 跳过 open 时的初始化首帧，避免空 PATCH
    * - 不在 effect 里读 form.getFieldsValue（不会触发 rerender），用 formSnapshot 代替
-   * - 这里调用的 updateShot 必须是"幂等的局部更新"——只发送预览相关字段，
-   *   不发送 character_ids 等需要数据库重建关系的字段，避免引入额外副作用
+   * - 这里调用的 updateShot 是幂等的局部更新，包含角色关联（character_ids）
+   *   以实现选中角色后自动保存，无需手动点击保存按钮
    */
   useEffect(() => {
     if (!shot || !open || !initializedRef.current) return;
@@ -235,6 +267,7 @@ export default function ShotEditor({ shot, projectId, open, onClose }: ShotEdito
           .filter((vid): vid is number => typeof vid === 'number');
         await updateShot(shot.id, {
           ...formSnapshot,
+          character_ids: selectedCharacterIds,
           ref_character_view_ids: refCharacterViewIds,
           ref_environment_image_id: lockedEnvImageId,
           prompt_modules_image: imageModules,
@@ -513,7 +546,23 @@ export default function ShotEditor({ shot, projectId, open, onClose }: ShotEdito
     }
     setSubmittingVideo(true);
     try {
-      await generateForShot(projectId, shot.id, 'video', videoModelId, videoGenParams);
+      // 如果选择了角色音频，把 audio_url 注入到视频生成参数中
+      const finalVideoParams = { ...videoGenParams };
+      if (selectedAudioCharacterId) {
+        const selectedChar = charDetailMap[selectedAudioCharacterId];
+        const audioUrl = selectedChar?.voice_config?.audio_url;
+        console.log('[ShotEditor] audio debug:', {
+          selectedAudioCharacterId,
+          charFound: !!selectedChar,
+          voiceConfig: selectedChar?.voice_config,
+          audioUrl,
+        });
+        if (audioUrl) {
+          finalVideoParams.audio_url = audioUrl;
+        }
+      }
+      console.log('[ShotEditor] finalVideoParams:', JSON.stringify(finalVideoParams));
+      await generateForShot(projectId, shot.id, 'video', videoModelId, finalVideoParams);
       message.success('视频生成已提交');
     } catch (error) {
       message.error((error as Error).message || '视频生成失败');
@@ -524,28 +573,30 @@ export default function ShotEditor({ shot, projectId, open, onClose }: ShotEdito
 
   if (!shot) return null;
 
-  // 4 象限网格的通用样式：每个象限都有独立背景 + 边框 + 内边距，便于视觉区分
+  // 每个象限的通用样式：独立背景 + 边框 + 内边距，便于视觉区分
   const quadrantStyle: React.CSSProperties = {
     background: '#141414',
     border: '1px solid #1e1e1e',
     borderRadius: 8,
-    padding: 12,
-    minHeight: 0, // 让 flex 子元素能正确缩放
+    padding: isCompact ? 10 : 12,
+    minHeight: 0,
     display: 'flex',
     flexDirection: 'column',
     overflow: 'auto',
   };
+
+  // Drawer 宽度策略：窄窗口全屏，宽窗口给更多空间（70vw 保证内容区 > 720px）
+  const drawerWidth = isNarrowWindow ? '100vw' : '70vw';
 
   return (
     <Drawer
       title={shot.title || '镜头编辑'}
       open={open}
       onClose={onClose}
-      // 拉宽到约半屏。用百分号让大屏 / 小屏自适应；最低 720px 防止过窄。
-      width="50vw"
+      width={drawerWidth}
       styles={{
         header: { background: '#141414', borderBottom: '1px solid #1e1e1e' },
-        body: { background: '#0c0c0c', padding: 12 },
+        body: { background: '#0c0c0c', padding: isCompact ? 8 : 12 },
       }}
       extra={
         <Button type="primary" icon={<SaveOutlined />} size="small" onClick={handleSave} loading={saving}>
@@ -553,17 +604,14 @@ export default function ShotEditor({ shot, projectId, open, onClose }: ShotEdito
         </Button>
       }
     >
-      {/* 4 象限布局：上下两行各占 50%，左右两列各占 50%。
-          - 左上：基础信息文本编辑区（旁白/对白/字幕/动作/角色）
-          - 右上：角色参考图 + 场景参考图
-          - 左下：候选图片提示词 + 候选图展示 + 图片生成按钮（含 ratio/resolution）
-          - 右下：候选视频提示词 + 候选视频展示 + 视频生成按钮（含 ratio/resolution/duration/watermark） */}
+      {/* 响应式布局：基于容器实际宽度决定单列/双列 */}
       <div
+        ref={containerRef}
         style={{
           display: 'grid',
-          gridTemplateColumns: '1fr 1fr',
-          gridTemplateRows: 'minmax(320px, auto) minmax(420px, auto)',
-          gap: 12,
+          gridTemplateColumns: isCompact ? '1fr' : '1fr 1fr',
+          gridTemplateRows: isCompact ? 'auto' : 'minmax(320px, auto) minmax(420px, auto)',
+          gap: isCompact ? 8 : 12,
         }}
       >
         {/* ─────────── 左上：文本编辑区 ─────────── */}
@@ -668,7 +716,7 @@ export default function ShotEditor({ shot, projectId, open, onClose }: ShotEdito
                       {views.length === 0 ? (
                         <Text type="secondary" style={{ fontSize: 11 }}>该角色暂无可用视图</Text>
                       ) : (
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6 }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: isCompact ? 'repeat(3, 1fr)' : 'repeat(4, 1fr)', gap: 6 }}>
                           {views.map((view) => {
                             const isLocked = view.id === lockedViewId;
                             return (
@@ -734,7 +782,7 @@ export default function ShotEditor({ shot, projectId, open, onClose }: ShotEdito
                 style={{ margin: '4px 0' }}
               />
             ) : (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: isCompact ? 'repeat(2, 1fr)' : 'repeat(3, 1fr)', gap: 6 }}>
                 {sceneEnvImages.map((img) => {
                   const isLocked = img.id === lockedEnvImageId;
                   return (
@@ -844,7 +892,7 @@ export default function ShotEditor({ shot, projectId, open, onClose }: ShotEdito
                 onChange={(value) => setImageModelId(value)}
                 options={imageModels.map((m) => ({
                   value: m.id,
-                  label: m.is_default ? `${m.name ?? m.id}（默认）` : (m.name ?? m.id),
+                  label: m.is_default ? `${m.display_name ?? m.label ?? m.id}（默认）` : (m.display_name ?? m.label ?? m.id),
                 }))}
               />
             </div>
@@ -971,13 +1019,68 @@ export default function ShotEditor({ shot, projectId, open, onClose }: ShotEdito
                 allowClear
                 placeholder="使用默认视频模型"
                 value={videoModelId}
-                onChange={(value) => setVideoModelId(value)}
+                onChange={(value) => {
+                  setVideoModelId(value);
+                  // 切换模型时，若新模型不支持音频则清空已选的角色音频
+                  const newModel = videoModels.find((m) => m.id === value);
+                  if (!newModel?.supports_audio) {
+                    setSelectedAudioCharacterId(undefined);
+                  }
+                }}
                 options={videoModels.map((m) => ({
                   value: m.id,
-                  label: m.is_default ? `${m.name ?? m.id}（默认）` : (m.name ?? m.id),
+                  label: m.is_default ? `${m.display_name ?? m.label ?? m.id}（默认）` : (m.display_name ?? m.label ?? m.id),
                 }))}
               />
             </div>
+            {/* 角色音频选择：只要有任何模型支持音频就显示此区域 */}
+            {(() => {
+              const anyModelSupportsAudio = videoModels.some((m) => m.supports_audio);
+              if (!anyModelSupportsAudio) return null;
+
+              const currentVideoModel = videoModels.find((m) => m.id === videoModelId)
+                ?? videoModels.find((m) => m.is_default);
+              const currentModelSupportsAudio = !!currentVideoModel?.supports_audio;
+              // 找到支持音频的模型名称，用于提示
+              const audioModelNames = videoModels
+                .filter((m) => m.supports_audio)
+                .map((m) => m.display_name ?? m.label ?? m.id);
+
+              // 筛选出当前镜头关联的、且有声音档案的角色
+              const audioCharacters = selectedCharacterIds
+                .map((charId) => charDetailMap[charId])
+                .filter((char): char is Character => !!char?.voice_config?.audio_url);
+
+              return (
+                <div style={{ gridColumn: '1 / 3' }}>
+                  <Text style={{ color: '#aaa', fontSize: 11, display: 'block', marginBottom: 4 }}>角色音频（驱动音频）</Text>
+                  {!currentModelSupportsAudio ? (
+                    <Text style={{ color: '#666', fontSize: 11 }}>
+                      当前模型不支持音频，请切换到 {audioModelNames.join(' / ')}
+                    </Text>
+                  ) : audioCharacters.length > 0 ? (
+                    <Select
+                      size="small"
+                      style={{ width: '100%' }}
+                      allowClear
+                      placeholder="不使用角色音频"
+                      value={selectedAudioCharacterId}
+                      onChange={(value) => setSelectedAudioCharacterId(value)}
+                      options={audioCharacters.map((char) => ({
+                        value: char.id,
+                        label: `${char.name}${char.voice_config?.audio_name ? ` (${char.voice_config.audio_name})` : ''}`,
+                      }))}
+                    />
+                  ) : (
+                    <Text style={{ color: '#666', fontSize: 11 }}>
+                      {selectedCharacterIds.length === 0
+                        ? '请先在左侧关联角色'
+                        : '关联的角色暂无声音档案'}
+                    </Text>
+                  )}
+                </div>
+              );
+            })()}
           </div>
           <Button
             type="primary"

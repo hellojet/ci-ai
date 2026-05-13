@@ -18,7 +18,7 @@ CREDITS_MAP = {"image": 2, "video": 10, "audio": 5}
 # 允许传入的参数白名单（按任务类型）。这里只做"白名单 + 类型清洗"，
 # 真正的合法值校验交给适配器（adapter 更清楚自己接受什么 ratio/分辨率）。
 _ALLOWED_IMAGE_PARAM_KEYS = {"ratio", "resolution"}
-_ALLOWED_VIDEO_PARAM_KEYS = {"ratio", "resolution", "duration", "watermark"}
+_ALLOWED_VIDEO_PARAM_KEYS = {"ratio", "resolution", "duration", "watermark", "audio_url"}
 
 
 def _sanitize_params(task_type: str, params: dict[str, Any] | None) -> dict[str, Any] | None:

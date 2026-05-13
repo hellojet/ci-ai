@@ -137,6 +137,7 @@ async def _submit_task(
     ratio: str | None = None,
     resolution: str | None = None,
     watermark: bool = False,
+    audio_url: str | None = None,
 ) -> str:
     """提交视频生成任务，返回 task_id。内部处理限流重试。
 
@@ -145,6 +146,8 @@ async def _submit_task(
       映射到 (width, height) 像素值，会与 resolution 一起决定。
     - resolution: 目标视频清晰度档位（"720p" / "1080p" / "2k"）。
     - watermark: 是否给输出视频加水印（默认 False）。
+    - audio_url: 驱动音频 URL（wan2.7-i2v 支持），追加为 media 中的 driving_audio。
+      支持 wav/mp3 格式，2~30 秒，≤15MB。
     """
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -182,13 +185,16 @@ async def _submit_task(
     # 默认不加水印；前端勾选时传 True
     parameters["watermark"] = bool(watermark)
 
+    media_items: list[dict] = [{"type": "first_frame", "url": image_url}]
+    if audio_url:
+        media_items.append({"type": "driving_audio", "url": audio_url})
+        logger.info("Video task includes driving_audio: %s", audio_url)
+
     payload = {
         "model": model,
         "input": {
             "prompt": prompt or "",
-            "media": [
-                {"type": "first_frame", "url": image_url},
-            ],
+            "media": media_items,
         },
         "parameters": parameters,
     }
@@ -328,6 +334,7 @@ async def generate(
     ratio: str | None = None,
     resolution: str | None = None,
     watermark: bool = False,
+    audio_url: str | None = None,
 ) -> str:
     """调用视频生成 API（图生视频，异步任务模式）。
 
@@ -341,6 +348,7 @@ async def generate(
         ratio: 视频长宽比（如 "9:16"），可选；与 resolution 一起决定输出像素尺寸
         resolution: 目标分辨率档位（如 "1080p"），可选
         watermark: 是否在输出视频上添加水印（默认 False）
+        audio_url: 驱动音频 URL（wan2.7-i2v 支持），可选。支持 wav/mp3，2~30 秒，≤15MB。
 
     Returns:
         视频 URL（网关返回的 CDN 地址）
@@ -366,6 +374,7 @@ async def generate(
             ratio=ratio,
             resolution=resolution,
             watermark=watermark,
+            audio_url=audio_url,
         )
         return await _poll_task(
             client=client,

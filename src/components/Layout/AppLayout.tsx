@@ -1,4 +1,5 @@
-import { Layout, Menu, Avatar, Dropdown, Button, Tooltip } from 'antd';
+import { useState, useEffect, useCallback } from 'react';
+import { Layout, Menu, Avatar, Dropdown, Button, Tooltip, Drawer } from 'antd';
 import {
   FolderOpenOutlined,
   UserOutlined,
@@ -7,6 +8,9 @@ import {
   AppstoreOutlined,
   LogoutOutlined,
   TranslationOutlined,
+  MenuFoldOutlined,
+  MenuUnfoldOutlined,
+  MenuOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useLocation, Outlet } from 'react-router';
 import { useAuthStore } from '@/stores/authStore';
@@ -17,11 +21,31 @@ import type { MenuProps } from 'antd';
 
 const { Sider, Header, Content } = Layout;
 
+/** 窗口宽度低于此值时，侧边栏改为 Drawer 覆盖模式 */
+const MOBILE_BREAKPOINT = 768;
+
 export default function AppLayout() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, logout } = useAuthStore();
   const { t, lang, toggleLang } = useLocale();
+
+  // 宽屏下的折叠状态（图标模式）
+  const [collapsed, setCollapsed] = useState(false);
+  // 窄屏下 Drawer 是否打开
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  // 是否为移动端窄屏
+  const [isMobile, setIsMobile] = useState(() => window.innerWidth < MOBILE_BREAKPOINT);
+
+  useEffect(() => {
+    const handleResize = () => {
+      const mobile = window.innerWidth < MOBILE_BREAKPOINT;
+      setIsMobile(mobile);
+      if (!mobile) setDrawerOpen(false);
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   const getSelectedKey = () => {
     const path = location.pathname;
@@ -43,7 +67,6 @@ export default function AppLayout() {
       icon: <AppstoreOutlined />,
       label: t('layout.assetLibrary'),
     },
-    // Settings 和用户管理仅 admin 可见
     ...(user?.role === 'admin'
       ? [
           {
@@ -80,7 +103,7 @@ export default function AppLayout() {
     },
   ];
 
-  const handleMenuClick: MenuProps['onClick'] = ({ key }) => {
+  const handleMenuClick: MenuProps['onClick'] = useCallback(({ key }: { key: string }) => {
     const routeMap: Record<string, string> = {
       projects: '/projects',
       assets: '/assets',
@@ -89,8 +112,10 @@ export default function AppLayout() {
     };
     if (routeMap[key]) {
       navigate(routeMap[key]);
+      // 移动端点击菜单后自动关闭 Drawer
+      setDrawerOpen(false);
     }
-  };
+  }, [navigate]);
 
   const handleUserMenuClick: MenuProps['onClick'] = ({ key }) => {
     if (key === 'logout') {
@@ -99,42 +124,108 @@ export default function AppLayout() {
     }
   };
 
+  /** 侧边栏 Logo + 标题 */
+  const siderHeader = (showTitle: boolean) => (
+    <div
+      style={{
+        height: 56,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        padding: showTitle ? '0 20px' : '0 16px',
+        justifyContent: showTitle ? 'flex-start' : 'center',
+        borderBottom: '1px solid #1e1e1e',
+        flexShrink: 0,
+      }}
+    >
+      <LogoIcon />
+      {showTitle && (
+        <span style={{ color: '#fff', fontSize: 16, fontWeight: 700, letterSpacing: 1, whiteSpace: 'nowrap' }}>
+          CI.AI
+        </span>
+      )}
+    </div>
+  );
+
+  /** 侧边栏菜单 */
+  const siderMenu = (
+    <Menu
+      mode="inline"
+      selectedKeys={[getSelectedKey()]}
+      onClick={handleMenuClick}
+      items={sideMenuItems}
+      style={{
+        background: 'transparent',
+        borderRight: 'none',
+        color: '#999',
+        marginTop: 8,
+      }}
+      theme="dark"
+      inlineCollapsed={!isMobile && collapsed}
+    />
+  );
+
+  /** 宽屏底部折叠/展开按钮 */
+  const collapseToggle = (
+    <div
+      style={{
+        position: 'absolute',
+        bottom: 16,
+        left: 0,
+        right: 0,
+        display: 'flex',
+        justifyContent: collapsed ? 'center' : 'flex-end',
+        padding: collapsed ? 0 : '0 12px',
+      }}
+    >
+      <Button
+        type="text"
+        icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+        onClick={() => setCollapsed(!collapsed)}
+        style={{ color: '#666', fontSize: 16 }}
+      />
+    </div>
+  );
+
   return (
     <Layout style={{ height: '100vh', background: '#0c0c0c' }}>
-      <Sider
-        width={200}
-        style={{
-          background: '#0c0c0c',
-          borderRight: '1px solid #1e1e1e',
-        }}
-      >
-        <div
+      {/* ---- 宽屏：正常 Sider（可折叠为图标模式） ---- */}
+      {!isMobile && (
+        <Sider
+          width={200}
+          collapsedWidth={60}
+          collapsed={collapsed}
+          trigger={null}
           style={{
-            height: 56,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            padding: '0 20px',
-            borderBottom: '1px solid #1e1e1e',
+            background: '#0c0c0c',
+            borderRight: '1px solid #1e1e1e',
+            position: 'relative',
+            transition: 'all 0.2s ease',
           }}
         >
-          <LogoIcon />
-          <span style={{ color: '#fff', fontSize: 16, fontWeight: 700, letterSpacing: 1 }}>CI.AI</span>
-        </div>
-        <Menu
-          mode="inline"
-          selectedKeys={[getSelectedKey()]}
-          onClick={handleMenuClick}
-          items={sideMenuItems}
-          style={{
-            background: 'transparent',
-            borderRight: 'none',
-            color: '#999',
-            marginTop: 8,
-          }}
-          theme="dark"
-        />
-      </Sider>
+          {siderHeader(!collapsed)}
+          {siderMenu}
+          {collapseToggle}
+        </Sider>
+      )}
+
+      {/* ---- 窄屏：Drawer 覆盖式侧边栏 ---- */}
+      <Drawer
+        placement="left"
+        open={isMobile && drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        width={240}
+        closable={false}
+        styles={{
+          body: { padding: 0, background: '#0c0c0c', display: 'flex', flexDirection: 'column' },
+          wrapper: {},
+        }}
+        rootStyle={{ position: 'absolute' }}
+      >
+        {siderHeader(true)}
+        {siderMenu}
+      </Drawer>
+
       <Layout>
         <Header
           style={{
@@ -148,6 +239,15 @@ export default function AppLayout() {
             gap: 16,
           }}
         >
+          {/* 窄屏：左侧汉堡按钮 */}
+          {isMobile && (
+            <Button
+              type="text"
+              icon={<MenuOutlined />}
+              onClick={() => setDrawerOpen(true)}
+              style={{ color: '#999', fontSize: 18, marginRight: 'auto' }}
+            />
+          )}
           <CreditsDisplay />
           <Tooltip title={lang === 'zh' ? 'English' : '中文'}>
             <Button
@@ -172,7 +272,7 @@ export default function AppLayout() {
           style={{
             background: '#0c0c0c',
             overflow: 'auto',
-            padding: 24,
+            padding: isMobile ? 16 : 24,
           }}
         >
           <Outlet />

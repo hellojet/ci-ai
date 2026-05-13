@@ -18,6 +18,7 @@ DEFAULT_VIDEO_PARAMS = {
     "resolution": "1080p",
     "duration": 5,
     "watermark": False,
+    "audio_url": None,
 }
 
 
@@ -77,23 +78,41 @@ def _build_prompt_for_shot(session, shot, prompt_type: str = "image") -> str:
     return prompt or (shot.title or "a cinematic scene")
 
 
+_sync_engine = None
+_sync_session_factory = None
+
+
 def _get_sync_session():
-    """创建同步数据库 session 用于 Celery worker。"""
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import sessionmaker
+    """创建同步数据库 session 用于 Celery worker。
 
-    from app.config import get_settings
+    engine 和 sessionmaker 缓存为模块级单例，避免每次任务都新建连接池，
+    导致 Supabase 等有连接数上限的托管数据库被打满（pool_size: 15）。
+    """
+    global _sync_engine, _sync_session_factory
 
-    settings = get_settings()
-    database_url = settings.database_url
-    # 将异步驱动替换为同步驱动
-    if "+aiosqlite" in database_url:
-        database_url = database_url.replace("+aiosqlite", "")
-    elif "+asyncpg" in database_url:
-        database_url = database_url.replace("+asyncpg", "+psycopg2")
-    engine = create_engine(database_url)
-    SessionLocal = sessionmaker(bind=engine)
-    return SessionLocal()
+    if _sync_session_factory is None:
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+
+        from app.config import get_settings
+
+        settings = get_settings()
+        database_url = settings.database_url
+        # 将异步驱动替换为同步驱动
+        if "+aiosqlite" in database_url:
+            database_url = database_url.replace("+aiosqlite", "")
+        elif "+asyncpg" in database_url:
+            database_url = database_url.replace("+asyncpg", "+psycopg2")
+        _sync_engine = create_engine(
+            database_url,
+            pool_size=2,
+            max_overflow=3,
+            pool_pre_ping=True,
+            pool_recycle=300,
+        )
+        _sync_session_factory = sessionmaker(bind=_sync_engine)
+
+    return _sync_session_factory()
 
 
 def _to_absolute_media_url(url: str) -> str:
@@ -387,6 +406,11 @@ def generate_video_task(self, task_id: int):
         # 缺省走默认 9:16 / 1080p / 5s / 无水印（与前端默认值保持一致）
         video_params = _merge_params(DEFAULT_VIDEO_PARAMS, task.params)
 
+        # 音频 URL：前端在 params.audio_url 中传入角色声音档案的公网 URL
+        audio_url = video_params.get("audio_url") or None
+        if audio_url:
+            audio_url = _to_absolute_media_url(audio_url)
+
         try:
             video_url = asyncio.run(
                 video_adapter.generate(
@@ -399,6 +423,7 @@ def generate_video_task(self, task_id: int):
                     ratio=video_params.get("ratio"),
                     resolution=video_params.get("resolution"),
                     watermark=bool(video_params.get("watermark") or False),
+                    audio_url=audio_url,
                 )
             )
         except Exception as exc:

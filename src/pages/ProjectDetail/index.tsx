@@ -42,7 +42,7 @@ export default function ProjectDetailPage() {
   const [editorOpen, setEditorOpen] = useState(false);
   // 剧本面板默认隐藏，需要时点击按钮展开
   const [scriptCollapsed, setScriptCollapsed] = useState(true);
-  const [previewCollapsed, setPreviewCollapsed] = useState(false);
+  const [previewCollapsed, setPreviewCollapsed] = useState(true);
 
   useEffect(() => {
     if (projectId) {

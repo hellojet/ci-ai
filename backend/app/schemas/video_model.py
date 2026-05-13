@@ -12,6 +12,8 @@ class VideoModelOut(BaseModel):
     display_name: Optional[str] = None
     protocol: str
     is_default: bool = False
+    # 该模型是否支持传入驱动音频（如 wan2.7-i2v 支持 driving_audio）
+    supports_audio: bool = False
 
 
 class VideoModelListResponse(BaseModel):

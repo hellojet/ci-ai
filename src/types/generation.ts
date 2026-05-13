@@ -37,6 +37,8 @@ export interface VideoGenParams {
   duration?: number;
   /** 是否在输出视频上加水印 */
   watermark?: boolean;
+  /** 驱动音频 URL（角色声音档案），仅支持音频的模型（如 wan2.7-i2v）会使用 */
+  audio_url?: string;
 }
 
 export interface GenerateRequest {

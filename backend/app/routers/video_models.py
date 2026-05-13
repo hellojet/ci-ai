@@ -26,6 +26,7 @@ async def list_video_models(_user: User = Depends(get_current_user)):
             display_name=item.get("display_name"),
             protocol=item["protocol"],
             is_default=item.get("default", False),
+            supports_audio=item.get("supports_audio", False),
         )
         for item in items
     ]

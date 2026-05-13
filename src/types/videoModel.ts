@@ -19,6 +19,8 @@ export interface VideoModel {
   display_name?: string | null;
   protocol: VideoModelProtocol;
   is_default: boolean;
+  /** 该模型是否支持传入驱动音频（如 wan2.7-i2v 支持 driving_audio） */
+  supports_audio?: boolean;
 }
 
 export interface VideoModelListResponse {
