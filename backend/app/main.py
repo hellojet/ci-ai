@@ -28,6 +28,7 @@ from app.routers import (
     settings,
     shots,
     styles,
+    trial_requests,
     uploads,
     video_models,
     ws,
@@ -344,6 +345,7 @@ app.include_router(settings.router, prefix=API_V1_PREFIX)
 app.include_router(admin.router, prefix=API_V1_PREFIX)
 app.include_router(uploads.router, prefix=API_V1_PREFIX)
 app.include_router(exports.router, prefix=API_V1_PREFIX)
+app.include_router(trial_requests.router, prefix=API_V1_PREFIX)
 
 # WebSocket 不走 /api/v1 前缀
 app.include_router(ws.router)

@@ -24,6 +24,7 @@ from app.models import (  # noqa: F401
     script,
     style,
     system_settings,
+    trial_request,
     user,
 )
 

@@ -7,6 +7,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { useLocaleStore } from '@/stores/localeStore';
 import AppLayout from '@/components/Layout/AppLayout';
 import ProtectedRoute from '@/components/ProtectedRoute';
+import LandingPage from '@/pages/Landing';
 import LoginPage from '@/pages/Login';
 import RegisterPage from '@/pages/Register';
 import ProjectListPage from '@/pages/ProjectList';
@@ -17,6 +18,7 @@ import EnvironmentDetailPage from '@/pages/AssetLibrary/EnvironmentDetail';
 import StyleDetailPage from '@/pages/AssetLibrary/StyleDetail';
 import SettingsPage from '@/pages/Settings';
 import UserManagementPage from '@/pages/Admin/UserManagement';
+import TrialRequestsPage from '@/pages/Admin/TrialRequests';
 
 const darkTheme = {
   algorithm: theme.darkAlgorithm,
@@ -45,6 +47,7 @@ export default function App() {
       <AntApp>
         <BrowserRouter>
           <Routes>
+            <Route path="/" element={<LandingPage />} />
             <Route path="/login" element={<LoginPage />} />
             {/* 注册功能已关闭，重定向到登录页 */}
             <Route path="/register" element={<Navigate to="/login" replace />} />
@@ -77,8 +80,16 @@ export default function App() {
                   </ProtectedRoute>
                 }
               />
+              <Route
+                path="/admin/trial-requests"
+                element={
+                  <ProtectedRoute requireAdmin>
+                    <TrialRequestsPage />
+                  </ProtectedRoute>
+                }
+              />
             </Route>
-            <Route path="*" element={<Navigate to="/projects" replace />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </BrowserRouter>
       </AntApp>

@@ -1,4 +1,4 @@
-"""管理员路由：用户管理。"""
+"""管理员路由：用户管理 + 试用申请管理。"""
 
 from datetime import datetime
 
@@ -12,7 +12,8 @@ from app.dependencies import require_admin
 from app.models.user import User
 from app.schemas.admin import UpdateCreditsRequest
 from app.schemas.common import ApiResponse, PaginatedData
-from app.services import admin_service
+from app.schemas.trial_request import TrialRequestOut, TrialRequestUpdate
+from app.services import admin_service, trial_request_service
 from app.utils.security import hash_password
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
@@ -112,3 +113,49 @@ async def delete_user(
 ):
     await admin_service.delete_user(db, user_id)
     return ApiResponse(message="User deleted")
+
+
+# ── 试用申请管理 ────────────────────────────────────────────────
+
+
+@router.get(
+    "/trial-requests",
+    response_model=ApiResponse[PaginatedData[TrialRequestOut]],
+)
+async def get_trial_requests(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    status: str | None = Query(None),
+    keyword: str | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    items, total = await trial_request_service.list_(
+        db, page, page_size, status, keyword
+    )
+    out = [TrialRequestOut.model_validate(r) for r in items]
+    return ApiResponse(data=PaginatedData(total=total, items=out))
+
+
+@router.put(
+    "/trial-requests/{request_id}",
+    response_model=ApiResponse[TrialRequestOut],
+)
+async def update_trial_request(
+    request_id: int,
+    body: TrialRequestUpdate,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    record = await trial_request_service.update(db, request_id, body)
+    return ApiResponse(data=TrialRequestOut.model_validate(record))
+
+
+@router.delete("/trial-requests/{request_id}", response_model=ApiResponse)
+async def delete_trial_request(
+    request_id: int,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    await trial_request_service.delete(db, request_id)
+    return ApiResponse(message="Trial request deleted")

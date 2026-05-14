@@ -17,21 +17,37 @@ apiClient.interceptors.request.use((config) => {
   return config;
 });
 
+export class ApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
+}
+
 apiClient.interceptors.response.use(
   (response) => {
     const apiResponse = response.data;
     if (apiResponse.code !== undefined && apiResponse.code !== 0) {
-      return Promise.reject(new Error(apiResponse.message || 'Request failed'));
+      return Promise.reject(new ApiError(apiResponse.message || 'Request failed', response.status));
     }
     return apiResponse.data !== undefined ? apiResponse.data : apiResponse;
   },
   (error) => {
-    if (error.response?.status === 401) {
+    const status = error.response?.status ?? 0;
+    if (status === 401) {
       removeToken();
-      window.location.href = '/login';
+      // 落地页等公开路由不要被 401 强制跳转走
+      if (!['/', '/login'].includes(window.location.pathname)) {
+        window.location.href = '/login';
+      }
     }
-    const message = error.response?.data?.message || error.message || 'Network error';
-    return Promise.reject(new Error(message));
+    const message =
+      error.response?.data?.message ||
+      error.response?.data?.detail ||
+      error.message ||
+      'Network error';
+    return Promise.reject(new ApiError(typeof message === 'string' ? message : 'Request failed', status));
   }
 );
 

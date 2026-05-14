@@ -11,6 +11,7 @@ import {
   MenuFoldOutlined,
   MenuUnfoldOutlined,
   MenuOutlined,
+  MailOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useLocation, Outlet } from 'react-router';
 import { useAuthStore } from '@/stores/authStore';
@@ -52,6 +53,7 @@ export default function AppLayout() {
     if (path.startsWith('/projects')) return 'projects';
     if (path.startsWith('/assets')) return 'assets';
     if (path.startsWith('/settings')) return 'settings';
+    if (path.startsWith('/admin/trial-requests')) return 'trialRequests';
     if (path.startsWith('/admin')) return 'admin';
     return 'projects';
   };
@@ -83,6 +85,11 @@ export default function AppLayout() {
             icon: <TeamOutlined />,
             label: t('layout.userManagement'),
           },
+          {
+            key: 'trialRequests',
+            icon: <MailOutlined />,
+            label: t('layout.trialRequests'),
+          },
         ]
       : []),
   ];
@@ -109,6 +116,7 @@ export default function AppLayout() {
       assets: '/assets',
       settings: '/settings',
       admin: '/admin/users',
+      trialRequests: '/admin/trial-requests',
     };
     if (routeMap[key]) {
       navigate(routeMap[key]);

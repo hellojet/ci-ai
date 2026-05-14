@@ -13,6 +13,7 @@ from app.models.shot_image import ShotImage
 from app.models.shot_video import ShotVideo
 from app.models.generation_task import GenerationTask
 from app.models.system_settings import SystemSettings
+from app.models.trial_request import TrialRequest
 
 __all__ = [
     "User",
@@ -30,4 +31,5 @@ __all__ = [
     "ShotVideo",
     "GenerationTask",
     "SystemSettings",
+    "TrialRequest",
 ]

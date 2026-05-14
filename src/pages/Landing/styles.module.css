@@ -1,0 +1,123 @@
+/* Landing 页共享样式：背景光斑、节奏、动画 keyframes */
+
+.page {
+  min-height: 100vh;
+  background: #0c0c0c;
+  color: #f5f5f5;
+  overflow-x: hidden;
+  position: relative;
+}
+
+/* 背景光斑容器（fixed 在视口，不随滚动移动） */
+.glow {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  overflow: hidden;
+}
+
+.glowBlob {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(180px);
+  opacity: 0.25;
+  will-change: transform, opacity;
+}
+
+.glowBlob1 {
+  width: 600px;
+  height: 600px;
+  top: -200px;
+  left: -150px;
+  background: radial-gradient(circle, #a855f7 0%, transparent 70%);
+  animation: glowDrift1 30s ease-in-out infinite;
+}
+
+.glowBlob2 {
+  width: 500px;
+  height: 500px;
+  top: 40%;
+  right: -150px;
+  background: radial-gradient(circle, #7c3aed 0%, transparent 70%);
+  animation: glowDrift2 38s ease-in-out infinite;
+}
+
+.glowBlob3 {
+  width: 700px;
+  height: 700px;
+  bottom: -250px;
+  left: 30%;
+  background: radial-gradient(circle, #6366f1 0%, transparent 70%);
+  animation: glowDrift3 44s ease-in-out infinite;
+}
+
+@keyframes glowDrift1 {
+  0%, 100% { transform: translate(0, 0); opacity: 0.25; }
+  50% { transform: translate(80px, 60px); opacity: 0.4; }
+}
+
+@keyframes glowDrift2 {
+  0%, 100% { transform: translate(0, 0); opacity: 0.2; }
+  50% { transform: translate(-100px, 80px); opacity: 0.35; }
+}
+
+@keyframes glowDrift3 {
+  0%, 100% { transform: translate(0, 0); opacity: 0.18; }
+  50% { transform: translate(60px, -100px); opacity: 0.3; }
+}
+
+/* 内容容器（最大宽 + 居中） */
+.container {
+  position: relative;
+  z-index: 1;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+/* 区块间距 */
+.section {
+  padding: 120px 0;
+  position: relative;
+  z-index: 1;
+}
+
+@media (max-width: 768px) {
+  .section {
+    padding: 72px 0;
+  }
+}
+
+/* 区块标题 */
+.sectionTitle {
+  font-size: clamp(32px, 4vw, 48px);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  text-align: center;
+  margin: 0 0 16px;
+  color: #f5f5f5;
+}
+
+.sectionSubtitle {
+  font-size: 16px;
+  text-align: center;
+  color: #999;
+  margin: 0 auto 64px;
+  max-width: 640px;
+}
+
+/* 减少动效偏好兜底：禁掉所有动画与 transform 过渡 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  .glowBlob {
+    animation: none !important;
+  }
+}
